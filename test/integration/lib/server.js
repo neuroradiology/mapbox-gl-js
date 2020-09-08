@@ -1,120 +1,50 @@
-'use strict';
-
-const st = require('st');
-const http = require('http');
+/* eslint-disable import/no-commonjs */
 const path = require('path');
-const colors = require('colors/safe');
 const fs = require('fs');
+const st = require('st');
+const {createServer} = require('http');
+const localizeURLs = require('./localize-urls');
 
 module.exports = function () {
-    const server = http.createServer(st({path: path.join(__dirname, '..')}));
+    const port = 2900;
+    const integrationMount = st({path: path.join(__dirname, '..')});
+    const mapboxGLStylesMount = st({path: path.dirname(require.resolve('mapbox-gl-styles')), url: 'mapbox-gl-styles'});
+    const mapboxMVTFixturesMount = st({path: path.dirname(require.resolve('@mapbox/mvt-fixtures')), url: 'mvt-fixtures'});
+    const server = createServer((req, res) => {
+        if (req.method === 'POST' && req.url === '/write-file') {
+            let body = '';
+            req.on('data', (data) => {
+                body += data;
+            });
+            req.on('end', () => {
 
-    function localURL(url) {
-        return url.replace(/^local:\/\//, 'http://localhost:2900/');
-    }
+                //Write data to disk
+                const {filePath, data} = JSON.parse(body);
+                fs.writeFile(path.join(process.cwd(), filePath), data, 'base64', () => {
+                    res.writeHead(200, {'Content-Type': 'text/html'});
+                    res.end('ok');
+                });
+            });
+        }
 
-    function clearMapboxProtocol(url) {
-        return url.replace(/^mapbox:\/\//, '');
-    }
+        return mapboxMVTFixturesMount(req, res, () => {
+            return mapboxGLStylesMount(req, res, () => {
+                return integrationMount(req, res);
+            });
+        });
+    });
 
     return {
-        listen: function (callback) {
-            server.listen(2900, callback);
+        listen(callback) {
+            server.listen(port, callback);
         },
 
-        close: function (callback) {
+        close(callback) {
             server.close(callback);
         },
 
-        localizeURLs: function (style) {
-            function localizeSourceURLs(source) {
-                for (const l in source.tiles) {
-                    source.tiles[l] = localURL(source.tiles[l]);
-                }
-
-                if (source.urls) {
-                    source.urls = source.urls.map(localURL);
-                }
-
-                if (source.url) {
-                    source.url = localURL(source.url);
-                }
-
-                if (source.data && typeof source.data == 'string') {
-                    source.data = localURL(source.data);
-                }
-            }
-
-            // localize the source, glyphs, and sprite URLs in the given style JSON
-            function localizeStyleURLs (style) {
-                for (const k in style.sources) {
-                    localizeSourceURLs(style.sources[k]);
-                }
-
-                if (style.sprite) {
-                    style.sprite = localURL(style.sprite);
-                }
-
-                if (style.glyphs) {
-                    style.glyphs = localURL(style.glyphs);
-                }
-            }
-
-            if (style.metadata && style.metadata.test && style.metadata.test.operations) {
-                style.metadata.test.operations.forEach((op) => {
-                    if (op[0] === 'addSource') {
-                        localizeSourceURLs(op[2]);
-                    } else if (op[0] === 'setStyle' && op[1]) {
-                        if (typeof op[1] === 'string') {
-                            let styleJSON;
-
-                            try {
-                                styleJSON = fs.readFileSync(path.join(__dirname, '..', op[1].replace(/^local:\/\//, '')));
-                            } catch (err) {
-                                console.log(colors.blue(`* ${err}`));
-                                return;
-                            }
-
-                            try {
-                                styleJSON = JSON.parse(styleJSON);
-                            } catch (err) {
-                                console.log(colors.blue(`* Error while parsing ${op[1]}: ${err}`));
-                                return;
-                            }
-
-                            // sources
-                            for (const k in styleJSON.sources) {
-                                const sourceName = clearMapboxProtocol(styleJSON.sources[k].url);
-                                if (styleJSON.sources[k].type === 'vector') {
-                                    styleJSON.sources[k].tiles = [ `http\:\/\/localhost:2900/tiles/${sourceName}/{z}-{x}-{y}.mvt` ];
-                                } else if (styleJSON.sources[k].type === 'raster') {
-                                    styleJSON.sources[k].tiles = [ `http\:\/\/localhost:2900/tiles/${sourceName}/{z}-{x}-{y}.png` ];
-                                }
-                                delete styleJSON.sources[k].url;
-                            }
-
-                            // sprite
-                            {
-                                const spriteName = clearMapboxProtocol(styleJSON.sprite);
-                                styleJSON.sprite = `http\:\/\/localhost:2900/${spriteName}`;
-                            }
-
-                            // glyphs
-                            {
-                                const glyphsName = clearMapboxProtocol(styleJSON.glyphs).replace(/^fonts/, 'glyphs');
-                                styleJSON.glyphs = `http\:\/\/localhost:2900/${glyphsName}`;
-                            }
-
-                            op[1] = styleJSON;
-                            op[2] = { diff: false };
-                        } else {
-                            localizeStyleURLs(op[1]);
-                        }
-                    }
-                });
-            }
-
-            localizeStyleURLs(style);
+        localizeURLs(style) {
+            return localizeURLs(style, port);
         }
     };
 };

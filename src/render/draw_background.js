@@ -1,49 +1,57 @@
 // @flow
 
-const pattern = require('./pattern');
+import StencilMode from '../gl/stencil_mode';
+import DepthMode from '../gl/depth_mode';
+import CullFaceMode from '../gl/cull_face_mode';
+import {
+    backgroundUniformValues,
+    backgroundPatternUniformValues
+} from './program/background_program';
 
 import type Painter from './painter';
 import type SourceCache from '../source/source_cache';
-import type StyleLayer from '../style/style_layer';
+import type BackgroundStyleLayer from '../style/style_layer/background_style_layer';
 
-module.exports = drawBackground;
+export default drawBackground;
 
-function drawBackground(painter: Painter, sourceCache: SourceCache, layer: StyleLayer) {
-    const gl = painter.gl;
+function drawBackground(painter: Painter, sourceCache: SourceCache, layer: BackgroundStyleLayer) {
+    const color = layer.paint.get('background-color');
+    const opacity = layer.paint.get('background-opacity');
+
+    if (opacity === 0) return;
+
+    const context = painter.context;
+    const gl = context.gl;
     const transform = painter.transform;
     const tileSize = transform.tileSize;
-    const color = layer.paint['background-color'];
-    const image = layer.paint['background-pattern'];
-    const opacity = layer.paint['background-opacity'];
+    const image = layer.paint.get('background-pattern');
+    if (painter.isPatternMissing(image)) return;
 
-    const isOpaque = !image && color[3] === 1 && opacity === 1;
-    if (painter.isOpaquePass !== isOpaque) return;
+    const pass = (!image && color.a === 1 && opacity === 1 && painter.opaquePassEnabledForLayer()) ? 'opaque' : 'translucent';
+    if (painter.renderPass !== pass) return;
 
-    gl.disable(gl.STENCIL_TEST);
+    const stencilMode = StencilMode.disabled;
+    const depthMode = painter.depthModeForSublayer(0, pass === 'opaque' ? DepthMode.ReadWrite : DepthMode.ReadOnly);
+    const colorMode = painter.colorModeForRenderPass();
 
-    painter.setDepthSublayer(0);
+    const program = painter.useProgram(image ? 'backgroundPattern' : 'background');
 
-    let program;
+    const tileIDs = transform.coveringTiles({tileSize});
+
     if (image) {
-        if (pattern.isPatternMissing(image, painter)) return;
-        program = painter.useProgram('fillPattern', painter.basicFillProgramConfiguration);
-        pattern.prepare(image, painter, program);
-        painter.tileExtentPatternVAO.bind(gl, program, painter.tileExtentBuffer);
-    } else {
-        program = painter.useProgram('fill', painter.basicFillProgramConfiguration);
-        gl.uniform4fv(program.uniforms.u_color, color);
-        painter.tileExtentVAO.bind(gl, program, painter.tileExtentBuffer);
+        context.activeTexture.set(gl.TEXTURE0);
+        painter.imageManager.bind(painter.context);
     }
 
-    gl.uniform1f(program.uniforms.u_opacity, opacity);
+    const crossfade = layer.getCrossfadeParameters();
+    for (const tileID of tileIDs) {
+        const matrix = painter.transform.calculatePosMatrix(tileID.toUnwrapped());
+        const uniformValues = image ?
+            backgroundPatternUniformValues(matrix, opacity, painter, image, {tileID, tileSize}, crossfade) :
+            backgroundUniformValues(matrix, opacity, color);
 
-    const coords = transform.coveringTiles({tileSize});
-
-    for (const coord of coords) {
-        if (image) {
-            pattern.setTile({coord, tileSize}, painter, program);
-        }
-        gl.uniformMatrix4fv(program.uniforms.u_matrix, false, painter.transform.calculatePosMatrix(coord));
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, painter.tileExtentBuffer.length);
+        program.draw(context, gl.TRIANGLES, depthMode, stencilMode, colorMode, CullFaceMode.disabled,
+            uniformValues, layer.id, painter.tileExtentBuffer,
+            painter.quadTriangleIndexBuffer, painter.tileExtentSegments);
     }
 }

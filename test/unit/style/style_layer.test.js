@@ -1,13 +1,12 @@
-'use strict';
-
-const test = require('mapbox-gl-js-test').test;
-const StyleLayer = require('../../../src/style/style_layer');
-const FillStyleLayer = require('../../../src/style/style_layer/fill_style_layer');
-const util = require('../../../src/util/util');
+import {test} from '../../util/test';
+import createStyleLayer from '../../../src/style/create_style_layer';
+import FillStyleLayer from '../../../src/style/style_layer/fill_style_layer';
+import {extend} from '../../../src/util/util';
+import Color from '../../../src/style-spec/util/color';
 
 test('StyleLayer', (t) => {
     t.test('instantiates the correct subclass', (t) => {
-        const layer = StyleLayer.create({type: 'fill'});
+        const layer = createStyleLayer({type: 'fill'});
 
         t.ok(layer instanceof FillStyleLayer);
         t.end();
@@ -16,82 +15,9 @@ test('StyleLayer', (t) => {
     t.end();
 });
 
-test('StyleLayer#updatePaintTransition', (t) => {
-
-    t.test('updates paint transition', (t) => {
-        const layer = StyleLayer.create({
-            "id": "background",
-            "type": "background",
-            "paint": {
-                "background-color": "red"
-            }
-        });
-        layer.updatePaintTransition('background-color', [], {});
-        t.deepEqual(layer.getPaintValue('background-color'), [1, 0, 0, 1]);
-        t.end();
-    });
-
-    t.test('updates paint transition with class', (t) => {
-        const layer = StyleLayer.create({
-            "id": "background",
-            "type": "background",
-            "paint": {
-                "background-color": "red"
-            },
-            "paint.mapbox": {
-                "background-color": "blue"
-            }
-        });
-        layer.updatePaintTransition('background-color', ['mapbox'], {});
-        t.deepEqual(layer.getPaintValue('background-color'), [0, 0, 1, 1]);
-        t.end();
-    });
-
-    t.test('updates paint transition with extraneous class', (t) => {
-        const layer = StyleLayer.create({
-            "id": "background",
-            "type": "background",
-            "paint": {
-                "background-color": "red"
-            }
-        });
-        layer.updatePaintTransition('background-color', ['mapbox'], {});
-        t.deepEqual(layer.getPaintValue('background-color'), [1, 0, 0, 1]);
-        t.end();
-    });
-
-    t.end();
-});
-
-test('StyleLayer#updatePaintTransitions', (t) => {
-    t.test('respects classes regardless of layer properties order', (t) => {
-        const layer = StyleLayer.create({
-            "id": "background",
-            "type": "fill",
-            "paint.blue": {
-                "fill-color": "#8ccbf7",
-                "fill-opacity": 1
-            },
-            "paint": {
-                "fill-opacity": 0
-            }
-        });
-
-        layer.updatePaintTransitions([], {transition: false}, null, createAnimationLoop());
-        t.equal(layer.getPaintValue('fill-opacity'), 0);
-
-        layer.updatePaintTransitions(['blue'], {transition: false}, null, createAnimationLoop());
-        t.equal(layer.getPaintValue('fill-opacity'), 1);
-
-        t.end();
-    });
-
-    t.end();
-});
-
 test('StyleLayer#setPaintProperty', (t) => {
     t.test('sets new property value', (t) => {
-        const layer = StyleLayer.create({
+        const layer = createStyleLayer({
             "id": "background",
             "type": "background"
         });
@@ -103,7 +29,7 @@ test('StyleLayer#setPaintProperty', (t) => {
     });
 
     t.test('updates property value', (t) => {
-        const layer = StyleLayer.create({
+        const layer = createStyleLayer({
             "id": "background",
             "type": "background",
             "paint": {
@@ -118,7 +44,7 @@ test('StyleLayer#setPaintProperty', (t) => {
     });
 
     t.test('unsets value', (t) => {
-        const layer = StyleLayer.create({
+        const layer = createStyleLayer({
             "id": "background",
             "type": "background",
             "paint": {
@@ -126,60 +52,21 @@ test('StyleLayer#setPaintProperty', (t) => {
                 "background-opacity": 1
             }
         });
-        layer.updatePaintTransitions([], {transition: false}, null, createAnimationLoop());
-        layer.setPaintProperty('background-color', null);
-        layer.updatePaintTransitions([], {transition: false}, null, createAnimationLoop());
 
-        t.deepEqual(layer.getPaintValue('background-color'), [0, 0, 0, 1]);
+        layer.setPaintProperty('background-color', null);
+        layer.updateTransitions({});
+        layer.recalculate({zoom: 0, zoomHistory: {}});
+
+        t.deepEqual(layer.paint.get('background-color'), new Color(0, 0, 0, 1));
         t.equal(layer.getPaintProperty('background-color'), undefined);
-        t.equal(layer.getPaintValue('background-opacity'), 1);
+        t.equal(layer.paint.get('background-opacity'), 1);
         t.equal(layer.getPaintProperty('background-opacity'), 1);
 
         t.end();
     });
 
-    t.test('sets classed paint value', (t) => {
-        const layer = StyleLayer.create({
-            "id": "background",
-            "type": "background",
-            "paint.night": {
-                "background-color": "red"
-            }
-        });
-
-        layer.setPaintProperty('background-color', 'blue', 'night');
-
-        t.deepEqual(layer.getPaintProperty('background-color', 'night'), 'blue');
-        t.end();
-    });
-
-    t.test('unsets classed paint value', (t) => {
-        const layer = StyleLayer.create({
-            "id": "background",
-            "type": "background",
-            "paint": {
-                "background-color": "red",
-                "background-opacity": 1
-            },
-            "paint.night": {
-                "background-color": "blue",
-                "background-opacity": 0.1
-            }
-        });
-        layer.updatePaintTransitions(['night'], {transition: false}, null, createAnimationLoop());
-        t.deepEqual(layer.getPaintProperty('background-color', 'night'), 'blue');
-        t.deepEqual(layer.getPaintValue('background-color'), [0, 0, 1, 1]);
-
-        layer.setPaintProperty('background-color', null, 'night');
-        layer.updatePaintTransitions(['night'], {transition: false}, null, createAnimationLoop());
-        t.deepEqual(layer.getPaintValue('background-color'), [1, 0, 0, 1]);
-        t.equal(layer.getPaintProperty('background-color', 'night'), undefined);
-
-        t.end();
-    });
-
     t.test('preserves existing transition', (t) => {
-        const layer = StyleLayer.create({
+        const layer = createStyleLayer({
             "id": "background",
             "type": "background",
             "paint": {
@@ -197,7 +84,7 @@ test('StyleLayer#setPaintProperty', (t) => {
     });
 
     t.test('sets transition', (t) => {
-        const layer = StyleLayer.create({
+        const layer = createStyleLayer({
             "id": "background",
             "type": "background",
             "paint": {
@@ -211,30 +98,14 @@ test('StyleLayer#setPaintProperty', (t) => {
         t.end();
     });
 
-    t.test('sets transition with a class name equal to the property name', (t) => {
-        const layer = StyleLayer.create({
-            "id": "background",
-            "type": "background",
-            "paint": {
-                "background-color": "red"
-            }
-        });
-
-        layer.setPaintProperty('background-color-transition', {duration: 400}, 'background-color');
-        layer.updatePaintTransitions([], {transition: false}, null, createAnimationLoop());
-        t.deepEqual(layer.getPaintProperty('background-color-transition', 'background-color'), {duration: 400});
-        t.end();
-    });
-
     t.test('emits on an invalid property value', (t) => {
-        const layer = StyleLayer.create({
+        const layer = createStyleLayer({
             "id": "background",
             "type": "background"
         });
 
         layer.on('error', () => {
             t.equal(layer.getPaintProperty('background-opacity'), undefined);
-            t.equal(layer.getPaintValue('background-opacity'), 1);
             t.end();
         });
 
@@ -242,7 +113,7 @@ test('StyleLayer#setPaintProperty', (t) => {
     });
 
     t.test('emits on an invalid transition property value', (t) => {
-        const layer = StyleLayer.create({
+        const layer = createStyleLayer({
             "id": "background",
             "type": "background"
         });
@@ -257,7 +128,7 @@ test('StyleLayer#setPaintProperty', (t) => {
     });
 
     t.test('can unset fill-outline-color #2886', (t) => {
-        const layer = StyleLayer.create({
+        const layer = createStyleLayer({
             id: 'building',
             type: 'fill',
             source: 'streets',
@@ -267,17 +138,20 @@ test('StyleLayer#setPaintProperty', (t) => {
         });
 
         layer.setPaintProperty('fill-outline-color', '#f00');
-        layer.updatePaintTransitions([], {transition: false}, null, createAnimationLoop());
-        t.deepEqual(layer.getPaintValue('fill-outline-color'), [1, 0, 0, 1]);
+        layer.updateTransitions({});
+        layer.recalculate({zoom: 0, zoomHistory: {}});
+        t.deepEqual(layer.paint.get('fill-outline-color').value, {kind: 'constant', value: new Color(1, 0, 0, 1)});
+
         layer.setPaintProperty('fill-outline-color', undefined);
-        layer.updatePaintTransitions([], {transition: false}, null, createAnimationLoop());
-        t.deepEqual(layer.getPaintValue('fill-outline-color'), [0, 0, 1, 1]);
+        layer.updateTransitions({});
+        layer.recalculate({zoom: 0, zoomHistory: {}});
+        t.deepEqual(layer.paint.get('fill-outline-color').value, {kind: 'constant', value: new Color(0, 0, 1, 1)});
 
         t.end();
     });
 
     t.test('can transition fill-outline-color from undefined to a value #3657', (t) => {
-        const layer = StyleLayer.create({
+        const layer = createStyleLayer({
             id: 'building',
             type: 'fill',
             source: 'streets',
@@ -286,27 +160,29 @@ test('StyleLayer#setPaintProperty', (t) => {
             }
         });
 
-        const animationLoop = createAnimationLoop();
-
         // setup: set and then unset fill-outline-color so that, when we then try
         // to re-set it, StyleTransition#calculate() attempts interpolation
         layer.setPaintProperty('fill-outline-color', '#f00');
-        layer.updatePaintTransitions([], {transition: true}, null, animationLoop);
+        layer.updateTransitions({});
+        layer.recalculate({zoom: 0, zoomHistory: {}});
+
         layer.setPaintProperty('fill-outline-color', undefined);
-        layer.updatePaintTransitions([], {transition: true}, null, animationLoop);
+        layer.updateTransitions({});
+        layer.recalculate({zoom: 0, zoomHistory: {}});
 
         // re-set fill-outline-color and get its value, triggering the attempt
         // to interpolate between undefined and #f00
         layer.setPaintProperty('fill-outline-color', '#f00');
-        layer.updatePaintTransitions([], {transition: true}, null, animationLoop);
-        t.doesNotThrow(() => {
-            layer.getPaintValue('fill-outline-color');
-        });
+        layer.updateTransitions({});
+        layer.recalculate({zoom: 0, zoomHistory: {}});
+
+        layer.paint.get('fill-outline-color');
+
         t.end();
     });
 
     t.test('sets null property value', (t) => {
-        const layer = StyleLayer.create({
+        const layer = createStyleLayer({
             "id": "background",
             "type": "background"
         });
@@ -317,56 +193,12 @@ test('StyleLayer#setPaintProperty', (t) => {
         t.end();
     });
 
-    test('StyleLayer#getPaintValueStopZoomLevels', (t) => {
-        t.test('get undefined paint value stop zoom levels', (t) => {
-            const layer = StyleLayer.create({
-                "id": "background",
-                "type": "fill",
-                "paint.blue": {
-                    "fill-color": "#8ccbf7",
-                    "fill-opacity": 1
-                },
-                "paint": {
-                    "fill-opacity": 0
-                }
-            });
-
-            t.deepEqual(layer.getPaintValueStopZoomLevels('background-color'), []);
-
-            t.end();
-        });
-
-        t.end();
-    });
-
-    test('StyleLayer#isPaintValueZoomConstant', (t) => {
-        t.test('is paint value zoom constant undefined', (t) => {
-            const layer = StyleLayer.create({
-                "id": "background",
-                "type": "fill",
-                "paint.blue": {
-                    "fill-color": "#8ccbf7",
-                    "fill-opacity": 1
-                },
-                "paint": {
-                    "fill-opacity": 0
-                }
-            });
-
-            t.equal(layer.isPaintValueZoomConstant('background-color'), true);
-
-            t.end();
-        });
-
-        t.end();
-    });
-
     t.end();
 });
 
 test('StyleLayer#setLayoutProperty', (t) => {
     t.test('sets new property value', (t) => {
-        const layer = StyleLayer.create({
+        const layer = createStyleLayer({
             "id": "symbol",
             "type": "symbol"
         });
@@ -378,7 +210,7 @@ test('StyleLayer#setLayoutProperty', (t) => {
     });
 
     t.test('emits on an invalid property value', (t) => {
-        const layer = StyleLayer.create({
+        const layer = createStyleLayer({
             "id": "symbol",
             "type": "symbol"
         });
@@ -391,7 +223,7 @@ test('StyleLayer#setLayoutProperty', (t) => {
     });
 
     t.test('updates property value', (t) => {
-        const layer = StyleLayer.create({
+        const layer = createStyleLayer({
             "id": "symbol",
             "type": "symbol",
             "layout": {
@@ -406,7 +238,7 @@ test('StyleLayer#setLayoutProperty', (t) => {
     });
 
     t.test('unsets property value', (t) => {
-        const layer = StyleLayer.create({
+        const layer = createStyleLayer({
             "id": "symbol",
             "type": "symbol",
             "layout": {
@@ -415,8 +247,9 @@ test('StyleLayer#setLayoutProperty', (t) => {
         });
 
         layer.setLayoutProperty('text-transform', null);
+        layer.recalculate({zoom: 0, zoomHistory: {}});
 
-        t.equal(layer.getLayoutValue('text-transform'), 'none');
+        t.deepEqual(layer.layout.get('text-transform').value, {kind: 'constant', value: 'none'});
         t.equal(layer.getLayoutProperty('text-transform'), undefined);
         t.end();
     });
@@ -427,7 +260,7 @@ test('StyleLayer#setLayoutProperty', (t) => {
 test('StyleLayer#serialize', (t) => {
 
     function createSymbolLayer(layer) {
-        return util.extend({
+        return extend({
             id: 'symbol',
             type: 'symbol',
             paint: {
@@ -441,21 +274,8 @@ test('StyleLayer#serialize', (t) => {
 
     t.test('serializes layers', (t) => {
         t.deepEqual(
-            StyleLayer.create(createSymbolLayer()).serialize(),
+            createStyleLayer(createSymbolLayer()).serialize(),
             createSymbolLayer()
-        );
-        t.end();
-    });
-
-    t.test('serializes layers with paint classes', (t) => {
-        const layer = createSymbolLayer({
-            'paint.night': {
-                'text-color': 'orange'
-            }
-        });
-        t.deepEqual(
-            StyleLayer.create(layer).serialize(),
-            layer
         );
         t.end();
     });
@@ -469,14 +289,14 @@ test('StyleLayer#serialize', (t) => {
         };
 
         t.deepEqual(
-            StyleLayer.create(createSymbolLayer({ paint: layerPaint })).serialize().paint,
+            createStyleLayer(createSymbolLayer({paint: layerPaint})).serialize().paint,
             layerPaint
         );
         t.end();
     });
 
     t.test('serializes added paint properties', (t) => {
-        const layer = StyleLayer.create(createSymbolLayer());
+        const layer = createStyleLayer(createSymbolLayer());
         layer.setPaintProperty('text-halo-color', 'orange');
 
         t.equal(layer.serialize().paint['text-halo-color'], 'orange');
@@ -486,11 +306,38 @@ test('StyleLayer#serialize', (t) => {
     });
 
     t.test('serializes added layout properties', (t) => {
-        const layer = StyleLayer.create(createSymbolLayer());
+        const layer = createStyleLayer(createSymbolLayer());
         layer.setLayoutProperty('text-size', 20);
 
         t.equal(layer.serialize().layout['text-transform'], 'uppercase');
         t.equal(layer.serialize().layout['text-size'], 20);
+
+        t.end();
+    });
+
+    t.test('serializes "visibility" of "visible"', (t) => {
+        const layer = createStyleLayer(createSymbolLayer());
+        layer.setLayoutProperty('visibility', 'visible');
+
+        t.equal(layer.serialize().layout['visibility'], 'visible');
+
+        t.end();
+    });
+
+    t.test('serializes "visibility" of "none"', (t) => {
+        const layer = createStyleLayer(createSymbolLayer());
+        layer.setLayoutProperty('visibility', 'none');
+
+        t.equal(layer.serialize().layout['visibility'], 'none');
+
+        t.end();
+    });
+
+    t.test('serializes "visibility" of undefined', (t) => {
+        const layer = createStyleLayer(createSymbolLayer());
+        layer.setLayoutProperty('visibility', undefined);
+
+        t.equal(layer.serialize().layout['visibility'], undefined);
 
         t.end();
     });
@@ -501,7 +348,7 @@ test('StyleLayer#serialize', (t) => {
 test('StyleLayer#serialize', (t) => {
 
     function createSymbolLayer(layer) {
-        return util.extend({
+        return extend({
             id: 'symbol',
             type: 'symbol',
             paint: {
@@ -515,7 +362,7 @@ test('StyleLayer#serialize', (t) => {
 
     t.test('serializes layers', (t) => {
         t.deepEqual(
-            StyleLayer.create(createSymbolLayer()).serialize(),
+            createStyleLayer(createSymbolLayer()).serialize(),
             createSymbolLayer()
         );
         t.end();
@@ -530,14 +377,14 @@ test('StyleLayer#serialize', (t) => {
         };
 
         t.deepEqual(
-            StyleLayer.create(createSymbolLayer({ paint: layerPaint })).serialize().paint,
+            createStyleLayer(createSymbolLayer({paint: layerPaint})).serialize().paint,
             layerPaint
         );
         t.end();
     });
 
     t.test('serializes added paint properties', (t) => {
-        const layer = StyleLayer.create(createSymbolLayer());
+        const layer = createStyleLayer(createSymbolLayer());
         layer.setPaintProperty('text-halo-color', 'orange');
 
         t.equal(layer.serialize().paint['text-halo-color'], 'orange');
@@ -547,7 +394,7 @@ test('StyleLayer#serialize', (t) => {
     });
 
     t.test('serializes added layout properties', (t) => {
-        const layer = StyleLayer.create(createSymbolLayer());
+        const layer = createStyleLayer(createSymbolLayer());
         layer.setLayoutProperty('text-size', 20);
 
         t.equal(layer.serialize().layout['text-transform'], 'uppercase');
@@ -556,138 +403,12 @@ test('StyleLayer#serialize', (t) => {
         t.end();
     });
 
-    t.end();
-});
-
-test('StyleLayer#getLayoutValue (default exceptions)', (t) => {
-    t.test('symbol-placement:point => *-rotation-alignment:viewport', (t) => {
-        const layer = StyleLayer.create({
-            "type": "symbol",
-            "layout": {
-                "symbol-placement": "point"
-            }
-        });
-        t.equal(layer.getLayoutValue('text-rotation-alignment'), 'viewport');
-        t.equal(layer.getLayoutValue('icon-rotation-alignment'), 'viewport');
-        t.end();
-    });
-
-    t.test('symbol-placement:line => *-rotation-alignment:map', (t) => {
-        const layer = StyleLayer.create({
-            "type": "symbol",
-            "layout": {
-                "symbol-placement": "line"
-            }
-        });
-        t.equal(layer.getLayoutValue('text-rotation-alignment'), 'map');
-        t.equal(layer.getLayoutValue('icon-rotation-alignment'), 'map');
-        t.end();
-    });
-
-    t.test('text-rotation-alignment:map => text-pitch-alignment:map', (t) => {
-        const layer = StyleLayer.create({
-            "type": "symbol",
-            "layout": {
-                "text-rotation-alignment": "map"
-            }
-        });
-        t.equal(layer.getLayoutValue('text-rotation-alignment'), 'map');
-        t.equal(layer.getLayoutValue('text-pitch-alignment'), 'map');
-        t.end();
-    });
-
-    t.test('text-rotation-alignment:viewport => text-pitch-alignment:viewport', (t) => {
-        const layer = StyleLayer.create({
-            "type": "symbol",
-            "layout": {
-                "text-rotation-alignment": "viewport"
-            }
-        });
-        t.equal(layer.getLayoutValue('text-rotation-alignment'), 'viewport');
-        t.equal(layer.getLayoutValue('text-pitch-alignment'), 'viewport');
-        t.end();
-    });
-
-    t.test('text-pitch-alignment:auto defaults to text-rotation-alignment', (t) => {
-        const layer = StyleLayer.create({
-            "type": "symbol",
-            "layout": {
-                "text-rotation-alignment": "map",
-                "text-pitch-alignment": "auto"
-            }
-        });
-        t.equal(layer.getLayoutValue('text-rotation-alignment'), 'map');
-        t.equal(layer.getLayoutValue('text-pitch-alignment'), 'map');
-        t.end();
-    });
-
-    t.test('text-pitch-alignment respected when set', (t) => {
-        const layer = StyleLayer.create({
-            "type": "symbol",
-            "layout": {
-                "text-rotation-alignment": "viewport",
-                "text-pitch-alignment": "map"
-            }
-        });
-        t.equal(layer.getLayoutValue('text-rotation-alignment'), 'viewport');
-        t.equal(layer.getLayoutValue('text-pitch-alignment'), 'map');
-        t.end();
-    });
-
-    t.test('symbol-placement:point and text-rotation-alignment:auto  => text-rotation-alignment:viewport ', (t) => {
-        const layer = StyleLayer.create({
-            "type": "symbol",
-            "layout": {
-                "symbol-placement": "point",
-                "text-rotation-alignment": "auto"
-            }
-        });
-        t.equal(layer.getLayoutValue('text-rotation-alignment'), 'viewport');
-        t.end();
-    });
-
-    t.test('symbol-placement:line and text-rotation-alignment:auto  => text-rotation-alignment:map ', (t) => {
-        const layer = StyleLayer.create({
-            "type": "symbol",
-            "layout": {
-                "symbol-placement": "line",
-                "text-rotation-alignment": "auto"
-            }
-        });
-        t.equal(layer.getLayoutValue('text-rotation-alignment'), 'map');
-        t.end();
-    });
-
-    t.test('symbol-placement:point and icon-rotation-alignment:auto  => icon-rotation-alignment:viewport ', (t) => {
-        const layer = StyleLayer.create({
-            "type": "symbol",
-            "layout": {
-                "symbol-placement": "point",
-                "icon-rotation-alignment": "auto"
-            }
-        });
-        t.equal(layer.getLayoutValue('icon-rotation-alignment'), 'viewport');
-        t.end();
-    });
-
-    t.test('symbol-placement:line and icon-rotation-alignment:auto  => icon-rotation-alignment:map ', (t) => {
-        const layer = StyleLayer.create({
-            "type": "symbol",
-            "layout": {
-                "symbol-placement": "line",
-                "icon-rotation-alignment": "auto"
-            }
-        });
-        t.equal(layer.getLayoutValue('icon-rotation-alignment'), 'map');
+    t.test('layer.paint is never undefined', (t) => {
+        const layer = createStyleLayer({type: 'fill'});
+        // paint is never undefined
+        t.ok(layer.paint);
         t.end();
     });
 
     t.end();
 });
-
-function createAnimationLoop() {
-    return {
-        set: function() {},
-        cancel: function() {}
-    };
-}

@@ -1,12 +1,12 @@
 attribute vec2 a_pos;
+varying vec2 v_uv;
 
 uniform mat4 u_matrix;
+uniform float u_overlay_scale;
 
 void main() {
-    // We are using Int16 for texture position coordinates to give us enough precision for
-    // fractional coordinates. We use 8192 to scale the texture coordinates in the buffer
-    // as an arbitrarily high number to preserve adequate precision when rendering.
-    // This is also the same value as the EXTENT we are using for our tile buffer pos coordinates,
-    // so math for modifying either is consistent.
-    gl_Position = u_matrix * vec4(a_pos, step(8192.0, a_pos.x), 1);
+    // This vertex shader expects a EXTENT x EXTENT quad,
+    // The UV co-ordinates for the overlay texture can be calculated using that knowledge
+    v_uv = a_pos / 8192.0;
+    gl_Position = u_matrix * vec4(a_pos * u_overlay_scale, 0, 1);
 }

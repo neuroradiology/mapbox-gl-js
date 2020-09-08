@@ -21,7 +21,7 @@ passes its test.
 ### Usage
 
 ``` javascript
-var ff = require('feature-filter');
+var ff = require('@mapbox/mapbox-gl-style-spec').featureFilter;
 
 // will match a feature with class of street_limited,
 // AND an admin_level less than or equal to 3,
@@ -45,11 +45,11 @@ var testFilter = ff(filter);
 var feature = {
     type: 2,
     properties: {
-       class: "street_limited"
+       class: "street_limited",
        admin_level: 1
     }
 };
 
 // will return a boolean based on whether the feature matched the filter
-return testFilter(feature);
+return testFilter({zoom: 0}, feature);
 ```

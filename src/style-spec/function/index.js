@@ -1,153 +1,134 @@
 
-const colorSpaces = require('./color_spaces');
-const parseColor = require('../util/parse_color');
-const extend = require('../util/extend');
-const getType = require('../util/get_type');
-const interpolate = require('../util/interpolate');
+import * as colorSpaces from '../util/color_spaces';
+import Color from '../util/color';
+import extend from '../util/extend';
+import getType from '../util/get_type';
+import * as interpolate from '../util/interpolate';
+import Interpolate from '../expression/definitions/interpolate';
+import Formatted from '../expression/types/formatted';
+import ResolvedImage from '../expression/types/resolved_image';
+import {supportsInterpolation} from '../util/properties';
+import {findStopLessThanOrEqualTo} from '../expression/stops';
+
+export function isFunction(value) {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 function identityFunction(x) {
     return x;
 }
 
-function createFunction(parameters, propertySpec) {
+export function createFunction(parameters, propertySpec) {
     const isColor = propertySpec.type === 'color';
+    const zoomAndFeatureDependent = parameters.stops && typeof parameters.stops[0][0] === 'object';
+    const featureDependent = zoomAndFeatureDependent || parameters.property !== undefined;
+    const zoomDependent = zoomAndFeatureDependent || !featureDependent;
+    const type = parameters.type || (supportsInterpolation(propertySpec) ? 'exponential' : 'interval');
 
-    let fun;
+    if (isColor) {
+        parameters = extend({}, parameters);
 
-    if (!isFunctionDefinition(parameters)) {
-        if (isColor && parameters) {
-            parameters = parseColor(parameters);
-        }
-        fun = function() {
-            return parameters;
-        };
-        fun.isFeatureConstant = true;
-        fun.isZoomConstant = true;
-
-    } else {
-        const zoomAndFeatureDependent = parameters.stops && typeof parameters.stops[0][0] === 'object';
-        const featureDependent = zoomAndFeatureDependent || parameters.property !== undefined;
-        const zoomDependent = zoomAndFeatureDependent || !featureDependent;
-        const type = parameters.type || (propertySpec.function === 'interpolated' ? 'exponential' : 'interval');
-
-        if (isColor) {
-            parameters = extend({}, parameters);
-
-            if (parameters.stops) {
-                parameters.stops = parameters.stops.map((stop) => {
-                    return [stop[0], parseColor(stop[1])];
-                });
-            }
-
-            if (parameters.default) {
-                parameters.default = parseColor(parameters.default);
-            } else {
-                parameters.default = parseColor(propertySpec.default);
-            }
+        if (parameters.stops) {
+            parameters.stops = parameters.stops.map((stop) => {
+                return [stop[0], Color.parse(stop[1])];
+            });
         }
 
-        let innerFun;
-        let hashedStops;
-        let categoricalKeyType;
-        if (type === 'exponential') {
-            innerFun = evaluateExponentialFunction;
-        } else if (type === 'interval') {
-            innerFun = evaluateIntervalFunction;
-        } else if (type === 'categorical') {
-            innerFun = evaluateCategoricalFunction;
-
-            // For categorical functions, generate an Object as a hashmap of the stops for fast searching
-            hashedStops = Object.create(null);
-            for (const stop of parameters.stops) {
-                hashedStops[stop[0]] = stop[1];
-            }
-
-            // Infer key type based on first stop key-- used to encforce strict type checking later
-            categoricalKeyType = typeof parameters.stops[0][0];
-
-        } else if (type === 'identity') {
-            innerFun = evaluateIdentityFunction;
+        if (parameters.default) {
+            parameters.default = Color.parse(parameters.default);
         } else {
-            throw new Error(`Unknown function type "${type}"`);
-        }
-
-        let outputFunction;
-
-        // If we're interpolating colors in a color system other than RGBA,
-        // first translate all stop values to that color system, then interpolate
-        // arrays as usual. The `outputFunction` option lets us then translate
-        // the result of that interpolation back into RGBA.
-        if (parameters.colorSpace && parameters.colorSpace !== 'rgb') {
-            if (colorSpaces[parameters.colorSpace]) {
-                const colorspace = colorSpaces[parameters.colorSpace];
-                // Avoid mutating the parameters value
-                parameters = JSON.parse(JSON.stringify(parameters));
-                for (let s = 0; s < parameters.stops.length; s++) {
-                    parameters.stops[s] = [
-                        parameters.stops[s][0],
-                        colorspace.forward(parameters.stops[s][1])
-                    ];
-                }
-                outputFunction = colorspace.reverse;
-            } else {
-                throw new Error(`Unknown color space: ${parameters.colorSpace}`);
-            }
-        } else {
-            outputFunction = identityFunction;
-        }
-
-        if (zoomAndFeatureDependent) {
-            const featureFunctions = {};
-            const zoomStops = [];
-            for (let s = 0; s < parameters.stops.length; s++) {
-                const stop = parameters.stops[s];
-                const zoom = stop[0].zoom;
-                if (featureFunctions[zoom] === undefined) {
-                    featureFunctions[zoom] = {
-                        zoom: zoom,
-                        type: parameters.type,
-                        property: parameters.property,
-                        default: parameters.default,
-                        stops: []
-                    };
-                    zoomStops.push(zoom);
-                }
-                featureFunctions[zoom].stops.push([stop[0].value, stop[1]]);
-            }
-
-            const featureFunctionStops = [];
-            for (const z of zoomStops) {
-                featureFunctionStops.push([featureFunctions[z].zoom, createFunction(featureFunctions[z], propertySpec)]);
-            }
-            fun = function(zoom, feature) {
-                return outputFunction(evaluateExponentialFunction({
-                    stops: featureFunctionStops,
-                    base: parameters.base
-                }, propertySpec, zoom)(zoom, feature));
-            };
-            fun.isFeatureConstant = false;
-            fun.isZoomConstant = false;
-
-        } else if (zoomDependent) {
-            fun = function(zoom) {
-                return outputFunction(innerFun(parameters, propertySpec, zoom, hashedStops, categoricalKeyType));
-            };
-            fun.isFeatureConstant = true;
-            fun.isZoomConstant = false;
-        } else {
-            fun = function(zoom, feature) {
-                const value = feature[parameters.property];
-                if (value === undefined) {
-                    return coalesce(parameters.default, propertySpec.default);
-                }
-                return outputFunction(innerFun(parameters, propertySpec, value, hashedStops, categoricalKeyType));
-            };
-            fun.isFeatureConstant = false;
-            fun.isZoomConstant = true;
+            parameters.default = Color.parse(propertySpec.default);
         }
     }
 
-    return fun;
+    if (parameters.colorSpace && parameters.colorSpace !== 'rgb' && !colorSpaces[parameters.colorSpace]) { // eslint-disable-line import/namespace
+        throw new Error(`Unknown color space: ${parameters.colorSpace}`);
+    }
+
+    let innerFun;
+    let hashedStops;
+    let categoricalKeyType;
+    if (type === 'exponential') {
+        innerFun = evaluateExponentialFunction;
+    } else if (type === 'interval') {
+        innerFun = evaluateIntervalFunction;
+    } else if (type === 'categorical') {
+        innerFun = evaluateCategoricalFunction;
+
+        // For categorical functions, generate an Object as a hashmap of the stops for fast searching
+        hashedStops = Object.create(null);
+        for (const stop of parameters.stops) {
+            hashedStops[stop[0]] = stop[1];
+        }
+
+        // Infer key type based on first stop key-- used to encforce strict type checking later
+        categoricalKeyType = typeof parameters.stops[0][0];
+
+    } else if (type === 'identity') {
+        innerFun = evaluateIdentityFunction;
+    } else {
+        throw new Error(`Unknown function type "${type}"`);
+    }
+
+    if (zoomAndFeatureDependent) {
+        const featureFunctions = {};
+        const zoomStops = [];
+        for (let s = 0; s < parameters.stops.length; s++) {
+            const stop = parameters.stops[s];
+            const zoom = stop[0].zoom;
+            if (featureFunctions[zoom] === undefined) {
+                featureFunctions[zoom] = {
+                    zoom,
+                    type: parameters.type,
+                    property: parameters.property,
+                    default: parameters.default,
+                    stops: []
+                };
+                zoomStops.push(zoom);
+            }
+            featureFunctions[zoom].stops.push([stop[0].value, stop[1]]);
+        }
+
+        const featureFunctionStops = [];
+        for (const z of zoomStops) {
+            featureFunctionStops.push([featureFunctions[z].zoom, createFunction(featureFunctions[z], propertySpec)]);
+        }
+
+        const interpolationType = {name: 'linear'};
+        return {
+            kind: 'composite',
+            interpolationType,
+            interpolationFactor: Interpolate.interpolationFactor.bind(undefined, interpolationType),
+            zoomStops: featureFunctionStops.map(s => s[0]),
+            evaluate({zoom}, properties) {
+                return evaluateExponentialFunction({
+                    stops: featureFunctionStops,
+                    base: parameters.base
+                }, propertySpec, zoom).evaluate(zoom, properties);
+            }
+        };
+    } else if (zoomDependent) {
+        const interpolationType = type === 'exponential' ?
+            {name: 'exponential', base: parameters.base !== undefined ? parameters.base : 1} : null;
+        return {
+            kind: 'camera',
+            interpolationType,
+            interpolationFactor: Interpolate.interpolationFactor.bind(undefined, interpolationType),
+            zoomStops: parameters.stops.map(s => s[0]),
+            evaluate: ({zoom}) => innerFun(parameters, propertySpec, zoom, hashedStops, categoricalKeyType)
+        };
+    } else {
+        return {
+            kind: 'source',
+            evaluate(_, feature) {
+                const value = feature && feature.properties ? feature.properties[parameters.property] : undefined;
+                if (value === undefined) {
+                    return coalesce(parameters.default, propertySpec.default);
+                }
+                return innerFun(parameters, propertySpec, value, hashedStops, categoricalKeyType);
+            }
+        };
+    }
 }
 
 function coalesce(a, b, c) {
@@ -169,7 +150,7 @@ function evaluateIntervalFunction(parameters, propertySpec, input) {
     if (input <= parameters.stops[0][0]) return parameters.stops[0][1];
     if (input >= parameters.stops[n - 1][0]) return parameters.stops[n - 1][1];
 
-    const index = findStopLessThanOrEqualTo(parameters.stops, input);
+    const index = findStopLessThanOrEqualTo(parameters.stops.map((stop) => stop[0]), input);
 
     return parameters.stops[index][1];
 }
@@ -184,7 +165,7 @@ function evaluateExponentialFunction(parameters, propertySpec, input) {
     if (input <= parameters.stops[0][0]) return parameters.stops[0][1];
     if (input >= parameters.stops[n - 1][0]) return parameters.stops[n - 1][1];
 
-    const index = findStopLessThanOrEqualTo(parameters.stops, input);
+    const index = findStopLessThanOrEqualTo(parameters.stops.map((stop) => stop[0]), input);
     const t = interpolationFactor(
         input, base,
         parameters.stops[index][0],
@@ -192,17 +173,24 @@ function evaluateExponentialFunction(parameters, propertySpec, input) {
 
     const outputLower = parameters.stops[index][1];
     const outputUpper = parameters.stops[index + 1][1];
-    const interp = interpolate[propertySpec.type] || identityFunction;
+    let interp = interpolate[propertySpec.type] || identityFunction; // eslint-disable-line import/namespace
 
-    if (typeof outputLower === 'function') {
-        return function(...args) {
-            const evaluatedLower = outputLower.apply(undefined, args);
-            const evaluatedUpper = outputUpper.apply(undefined, args);
-            // Special case for fill-outline-color, which has no spec default.
-            if (evaluatedLower === undefined || evaluatedUpper === undefined) {
-                return undefined;
+    if (parameters.colorSpace && parameters.colorSpace !== 'rgb') {
+        const colorspace = colorSpaces[parameters.colorSpace]; // eslint-disable-line import/namespace
+        interp = (a, b) => colorspace.reverse(colorspace.interpolate(colorspace.forward(a), colorspace.forward(b), t));
+    }
+
+    if (typeof outputLower.evaluate === 'function') {
+        return {
+            evaluate(...args) {
+                const evaluatedLower = outputLower.evaluate.apply(undefined, args);
+                const evaluatedUpper = outputUpper.evaluate.apply(undefined, args);
+                // Special case for fill-outline-color, which has no spec default.
+                if (evaluatedLower === undefined || evaluatedUpper === undefined) {
+                    return undefined;
+                }
+                return interp(evaluatedLower, evaluatedUpper, t);
             }
-            return interp(evaluatedLower, evaluatedUpper, t);
         };
     }
 
@@ -211,43 +199,15 @@ function evaluateExponentialFunction(parameters, propertySpec, input) {
 
 function evaluateIdentityFunction(parameters, propertySpec, input) {
     if (propertySpec.type === 'color') {
-        input = parseColor(input);
+        input = Color.parse(input);
+    } else if (propertySpec.type === 'formatted') {
+        input = Formatted.fromString(input.toString());
+    } else if (propertySpec.type === 'resolvedImage') {
+        input = ResolvedImage.fromString(input.toString());
     } else if (getType(input) !== propertySpec.type && (propertySpec.type !== 'enum' || !propertySpec.values[input])) {
         input = undefined;
     }
     return coalesce(input, parameters.default, propertySpec.default);
-}
-
-/**
- * Returns the index of the last stop <= input, or 0 if it doesn't exist.
- *
- * @private
- */
-function findStopLessThanOrEqualTo(stops, input) {
-    const n = stops.length;
-    let lowerIndex = 0;
-    let upperIndex = n - 1;
-    let currentIndex = 0;
-    let currentValue, upperValue;
-
-    while (lowerIndex <= upperIndex) {
-        currentIndex = Math.floor((lowerIndex + upperIndex) / 2);
-        currentValue = stops[currentIndex][0];
-        upperValue = stops[currentIndex + 1][0];
-        if (input === currentValue || input > currentValue && input < upperValue) { // Search complete
-            return currentIndex;
-        } else if (currentValue < input) {
-            lowerIndex = currentIndex + 1;
-        } else if (currentValue > input) {
-            upperIndex = currentIndex - 1;
-        }
-    }
-
-    return Math.max(currentIndex - 1, 0);
-}
-
-function isFunctionDefinition(value) {
-    return typeof value === 'object' && (value.stops || value.type === 'identity');
 }
 
 /**
@@ -287,7 +247,7 @@ function isFunctionDefinition(value) {
  * expensive `Math.pow()` operations.)
  *
  * @private
-*/
+ */
 function interpolationFactor(input, base, lowerValue, upperValue) {
     const difference = upperValue - lowerValue;
     const progress = input - lowerValue;
@@ -300,8 +260,3 @@ function interpolationFactor(input, base, lowerValue, upperValue) {
         return (Math.pow(base, progress) - 1) / (Math.pow(base, difference) - 1);
     }
 }
-
-module.exports = createFunction;
-module.exports.isFunctionDefinition = isFunctionDefinition;
-module.exports.interpolationFactor = interpolationFactor;
-module.exports.findStopLessThanOrEqualTo = findStopLessThanOrEqualTo;

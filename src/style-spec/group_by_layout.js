@@ -1,9 +1,9 @@
 
-const refProperties = require('./util/ref_properties');
+import refProperties from './util/ref_properties';
 
 function stringify(obj) {
     const type = typeof obj;
-    if (type === 'number' || type === 'string' || obj === undefined || obj === null)
+    if (type === 'number' || type === 'boolean' || type === 'string' || obj === undefined || obj === null)
         return JSON.stringify(obj);
 
     if (Array.isArray(obj)) {
@@ -31,7 +31,7 @@ function getKey(layer) {
     return key;
 }
 
-module.exports = groupByLayout;
+export default groupByLayout;
 
 /**
  * Given an array of layers, return an array of arrays of layers where all
@@ -45,13 +45,19 @@ module.exports = groupByLayout;
  *
  * @private
  * @param {Array<Layer>} layers
+ * @param {Object} [cachedKeys] - an object to keep already calculated keys.
  * @returns {Array<Array<Layer>>}
  */
-function groupByLayout(layers) {
+function groupByLayout(layers, cachedKeys) {
     const groups = {};
 
     for (let i = 0; i < layers.length; i++) {
-        const k = getKey(layers[i]);
+
+        const k = (cachedKeys && cachedKeys[layers[i].id]) || getKey(layers[i]);
+        // update the cache if there is one
+        if (cachedKeys)
+            cachedKeys[layers[i].id] = k;
+
         let group = groups[k];
         if (!group) {
             group = groups[k] = [];

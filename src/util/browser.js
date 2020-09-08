@@ -1,12 +1,13 @@
-// @flow
+// @flow strict
 
-const window = require('./window');
+import window from './window';
+import type {Cancelable} from '../types/cancelable';
 
 const now = window.performance && window.performance.now ?
     window.performance.now.bind(window.performance) :
     Date.now.bind(Date);
 
-const frame = window.requestAnimationFrame ||
+const raf = window.requestAnimationFrame ||
     window.mozRequestAnimationFrame ||
     window.webkitRequestAnimationFrame ||
     window.msRequestAnimationFrame;
@@ -16,50 +17,26 @@ const cancel = window.cancelAnimationFrame ||
     window.webkitCancelAnimationFrame ||
     window.msCancelAnimationFrame;
 
+let linkEl;
+
+let reducedMotionQuery: MediaQueryList;
+
 /**
  * @private
  */
-module.exports = {
+const exported = {
     /**
      * Provides a function that outputs milliseconds: either performance.now()
      * or a fallback to Date.now()
      */
     now,
 
-    frame(fn: Function) {
-        return frame(fn);
+    frame(fn: (paintStartTimestamp: number) => void): Cancelable {
+        const frame = raf(fn);
+        return {cancel: () => cancel(frame)};
     },
 
-    cancelFrame(id: number) {
-        return cancel(id);
-    },
-
-    timed(fn: (n: number) => mixed, dur: number, ctx: mixed) {
-        if (!dur) {
-            fn.call(ctx, 1);
-            return null;
-        }
-
-        let abort = false;
-        const start = now();
-
-        function tick() {
-            if (abort) return;
-            const end = now();
-            if (end >= start + dur) {
-                fn.call(ctx, 1);
-            } else {
-                fn.call(ctx, (end - start) / dur);
-                frame(tick);
-            }
-        }
-
-        frame(tick);
-
-        return function() { abort = true; };
-    },
-
-    getImageData(img: CanvasImageSource): Uint8ClampedArray {
+    getImageData(img: CanvasImageSource, padding?: number = 0): ImageData {
         const canvas = window.document.createElement('canvas');
         const context = canvas.getContext('2d');
         if (!context) {
@@ -68,18 +45,26 @@ module.exports = {
         canvas.width = img.width;
         canvas.height = img.height;
         context.drawImage(img, 0, 0, img.width, img.height);
-        return context.getImageData(0, 0, img.width, img.height).data;
+        return context.getImageData(-padding, -padding, img.width + 2 * padding, img.height + 2 * padding);
     },
 
-    hardwareConcurrency: window.navigator.hardwareConcurrency || 4,
+    resolveURL(path: string) {
+        if (!linkEl) linkEl = window.document.createElement('a');
+        linkEl.href = path;
+        return linkEl.href;
+    },
+
+    hardwareConcurrency: window.navigator && window.navigator.hardwareConcurrency || 4,
 
     get devicePixelRatio() { return window.devicePixelRatio; },
-
-    supportsWebp: false
+    get prefersReducedMotion(): boolean {
+        if (!window.matchMedia) return false;
+        //Lazily initialize media query
+        if (reducedMotionQuery == null) {
+            reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+        }
+        return reducedMotionQuery.matches;
+    },
 };
 
-const webpImgTest = window.document.createElement('img');
-webpImgTest.onload = function() {
-    module.exports.supportsWebp = true;
-};
-webpImgTest.src = 'data:image/webp;base64,UklGRh4AAABXRUJQVlA4TBEAAAAvAQAAAAfQ//73v/+BiOh/AAA=';
+export default exported;

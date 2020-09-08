@@ -1,12 +1,18 @@
+// @flow
 
-const format = require('util').format;
+// Note: Do not inherit from Error. It breaks when transpiling to ES5.
 
-function ValidationError(key, value, ...args) {
-    this.message = (key ? `${key}: ` : '') + format.apply(format, args);
+export default class ValidationError {
+    message: string;
+    identifier: ?string;
+    line: ?number;
 
-    if (value !== null && value !== undefined && value.__line__) {
-        this.line = value.__line__;
+    constructor(key: ?string, value: ?{ __line__: number }, message: string, identifier: ?string) {
+        this.message = (key ? `${key}: ` : '') + message;
+        if (identifier) this.identifier = identifier;
+
+        if (value !== null && value !== undefined && value.__line__) {
+            this.line = value.__line__;
+        }
     }
 }
-
-module.exports = ValidationError;

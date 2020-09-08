@@ -1,12 +1,13 @@
 // @flow
 
-const quickselect = require('quickselect');
-const calculateSignedArea = require('./util').calculateSignedArea;
+import quickselect from 'quickselect';
+
+import {calculateSignedArea} from './util';
 
 import type Point from '@mapbox/point-geometry';
 
 // classifies an array of rings into polygons with outer rings and holes
-module.exports = function classifyRings(rings: Array<Array<Point>>, maxRings: number) {
+export default function classifyRings(rings: Array<Array<Point>>, maxRings: number) {
     const len = rings.length;
 
     if (len <= 1) return [rings];
@@ -33,7 +34,7 @@ module.exports = function classifyRings(rings: Array<Array<Point>>, maxRings: nu
     }
     if (polygon) polygons.push(polygon);
 
-    // Earcut performance degrages with the # of rings in a polygon. For this
+    // Earcut performance degrades with the # of rings in a polygon. For this
     // reason, we limit strip out all but the `maxRings` largest rings.
     if (maxRings > 1) {
         for (let j = 0; j < polygons.length; j++) {
@@ -44,7 +45,7 @@ module.exports = function classifyRings(rings: Array<Array<Point>>, maxRings: nu
     }
 
     return polygons;
-};
+}
 
 function compareAreas(a, b) {
     return b.area - a.area;

@@ -1,9 +1,9 @@
-'use strict';
+import {test} from '../../util/test';
 
-const test = require('mapbox-gl-js-test').test;
-const spec = require('../../../src/style-spec');
+/* eslint-disable import/namespace */
+import * as spec from '../../../src/style-spec/style-spec';
 
-['v6', 'v7', 'v8', 'latest'].forEach((version) => {
+['v8', 'latest'].forEach((version) => {
     ['', 'min'].forEach((kind) => {
         const v = version + kind;
         test(v, (t) => {
@@ -20,6 +20,35 @@ const spec = require('../../../src/style-spec');
     });
 });
 
+test(`v8 Spec SDK Support section`, (t) => {
+    const v = 'v8';
+    const propObjs = [].concat(spec[v].paint).concat(spec[v].layout);
+    propObjs.forEach((objKey) => {
+        const props = spec[v][objKey];
+        const propKeys = Object.keys(props);
+        propKeys.forEach((key) => {
+            t.ok(props[key]["sdk-support"], `${objKey}_${key} is missing sdk support section`);
+            if (props[key]["sdk-support"]) {
+                t.ok(props[key]["sdk-support"]["basic functionality"], `${objKey}_${key} is missing sdk support section for 'basic functionality'`);
+                if (props[key]["property-type"].includes("constant")) {
+                    t.notOk(props[key]["sdk-support"]["data-driven styling"], `${objKey}_${key} should not have sdk support section for 'data-driven styling'`);
+                } else {
+                    t.ok(props[key]["sdk-support"]["data-driven styling"], `${objKey}_${key} is missing sdk support section for 'data-driven styling'`);
+                }
+            }
+        });
+    });
+
+    const expressions = spec[v].expression_name.values;
+    const expressionNames = Object.keys(expressions);
+    expressionNames.forEach((expr) => {
+        t.ok(expressions[expr]["sdk-support"], `expression_${expr} is missing sdk support section`);
+        if (expressions[expr]["sdk-support"]) {
+            t.ok(expressions[expr]["sdk-support"]["basic functionality"], `expression_${expr} is missing sdk support section for 'basic functionality'`);
+        }
+    });
+    t.end();
+});
 function validSchema(k, t, obj, ref, version, kind) {
     const scalar = ['boolean', 'string', 'number'];
     const types = Object.keys(ref).concat(['boolean', 'string', 'number',
@@ -34,7 +63,11 @@ function validSchema(k, t, obj, ref, version, kind) {
         'text-justify-enum',
         'text-anchor-enum',
         'text-transform-enum',
-        'visibility-enum'
+        'visibility-enum',
+        'property-type',
+        'formatted',
+        'resolvedImage',
+        'promoteId'
     ]);
     const keys = [
         'default',
@@ -44,6 +77,8 @@ function validSchema(k, t, obj, ref, version, kind) {
         'zoom-function',
         'property-function',
         'function-output',
+        'expression',
+        'property-type',
         'length',
         'min-length',
         'required',
@@ -57,7 +92,8 @@ function validSchema(k, t, obj, ref, version, kind) {
         'minimum',
         'period',
         'requires',
-        'sdk-support'
+        'sdk-support',
+        'overridable'
     ];
 
     // Schema object.
@@ -116,11 +152,18 @@ function validSchema(k, t, obj, ref, version, kind) {
 
         // schema key function checks
         if (obj.function !== undefined) {
+            t.ok(ref.$version < 8, 'migrated to `expression` schema in v8 spec');
             if (ref.$version >= 7) {
                 t.equal(true, ['interpolated', 'piecewise-constant'].indexOf(obj.function) >= 0, `function: ${obj.function}`);
             } else {
                 t.equal('boolean', typeof obj.function, `${k}.required (boolean)`);
             }
+        } else if (obj.expression !== undefined) {
+            const expression = obj.expression;
+            t.ok(ref['property-type'][obj['property-type']], `${k}.expression: property-type: ${obj['property-type']}`);
+            t.equal('boolean', typeof expression.interpolated, `${k}.expression.interpolated.required (boolean)`);
+            t.equal(true, Array.isArray(expression.parameters), `${k}.expression.parameters array`);
+            if (obj['property-type'] !== 'color-ramp') t.equal(true, expression.parameters.every(k => k === 'zoom' || k === 'feature' || k === 'feature-state'));
         }
 
         // schema key required checks

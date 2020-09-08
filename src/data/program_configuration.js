@@ -1,199 +1,379 @@
 // @flow
 
-const createVertexArrayType = require('./vertex_array_type');
-const interpolationFactor = require('../style-spec/function').interpolationFactor;
-const packUint8ToFloat = require('../shaders/encode_attribute').packUint8ToFloat;
-const VertexBuffer = require('../gl/vertex_buffer');
+import {packUint8ToFloat} from '../shaders/encode_attribute';
+import Color from '../style-spec/util/color';
+import {supportsPropertyExpression} from '../style-spec/util/properties';
+import {register} from '../util/web_worker_transfer';
+import {PossiblyEvaluatedPropertyValue} from '../style/properties';
+import {StructArrayLayout1f4, StructArrayLayout2f8, StructArrayLayout4f16, PatternLayoutArray} from './array_types';
+import {clamp} from '../util/util';
+import patternAttributes from './bucket/pattern_attributes';
+import EvaluationParameters from '../style/evaluation_parameters';
+import FeaturePositionMap from './feature_position_map';
+import {
+    Uniform,
+    Uniform1f,
+    UniformColor,
+    Uniform4f,
+    type UniformLocations
+} from '../render/uniform_binding';
 
-import type StyleLayer from '../style/style_layer';
-import type {ViewType, StructArray, SerializedStructArray, StructArrayTypeParameters} from '../util/struct_array';
-import type Program from '../render/program';
+import type {CanonicalTileID} from '../source/tile_id';
+import type Context from '../gl/context';
+import type {TypedStyleLayer} from '../style/style_layer/typed_style_layer';
+import type {CrossfadeParameters} from '../style/evaluation_parameters';
+import type {StructArray, StructArrayMember} from '../util/struct_array';
+import type VertexBuffer from '../gl/vertex_buffer';
+import type {ImagePosition} from '../render/image_atlas';
+import type {
+    Feature,
+    FeatureState,
+    GlobalProperties,
+    SourceExpression,
+    CompositeExpression
+} from '../style-spec/expression';
+import type {PossiblyEvaluated} from '../style/properties';
+import type {FeatureStates} from '../source/source_state';
+import type {FormattedSection} from '../style-spec/expression/types/formatted';
 
-type LayoutAttribute = {
+export type BinderUniform = {
     name: string,
-    type: ViewType,
-    components?: number
-}
-
-type PaintAttribute = {
     property: string,
-    name?: string,
-    useIntegerZoom?: boolean
-}
+    binding: Uniform<any>
+};
 
-export type PaintPropertyStatistics = {
-    [property: string]: { max: number }
-}
-
-export type ProgramInterface = {
-    layoutAttributes: Array<LayoutAttribute>,
-    indexArrayType: Class<StructArray>,
-    dynamicLayoutAttributes?: Array<LayoutAttribute>,
-    paintAttributes?: Array<PaintAttribute>,
-    indexArrayType2?: Class<StructArray>
-}
-
-function packColor(color: [number, number, number, number]): [number, number] {
+function packColor(color: Color): [number, number] {
     return [
-        packUint8ToFloat(255 * color[0], 255 * color[1]),
-        packUint8ToFloat(255 * color[2], 255 * color[3])
+        packUint8ToFloat(255 * color.r, 255 * color.g),
+        packUint8ToFloat(255 * color.b, 255 * color.a)
     ];
 }
 
-interface Binder {
-    property: string;
+/**
+ *  `Binder` is the interface definition for the strategies for constructing,
+ *  uploading, and binding paint property data as GLSL attributes. Most style-
+ *  spec properties have a 1:1 relationship to shader attribute/uniforms, but
+ *  some require multliple values per feature to be passed to the GPU, and in
+ *  those cases we bind multiple attributes/uniforms.
+ *
+ *  It has three implementations, one for each of the three strategies we use:
+ *
+ *  * For _constant_ properties -- those whose value is a constant, or the constant
+ *    result of evaluating a camera expression at a particular camera position -- we
+ *    don't need a vertex attribute buffer, and instead use a uniform.
+ *  * For data expressions, we use a vertex buffer with a single attribute value,
+ *    the evaluated result of the source function for the given feature.
+ *  * For composite expressions, we use a vertex buffer with two attributes: min and
+ *    max values covering the range of zooms at which we expect the tile to be
+ *    displayed. These values are calculated by evaluating the composite expression for
+ *    the given feature at strategically chosen zoom levels. In addition to this
+ *    attribute data, we also use a uniform value which the shader uses to interpolate
+ *    between the min and max value at the final displayed zoom level. The use of a
+ *    uniform allows us to cheaply update the value on every frame.
+ *
+ *  Note that the shader source varies depending on whether we're using a uniform or
+ *  attribute. We dynamically compile shaders at runtime to accomodate this.
+ *
+ * @private
+ */
 
-    populatePaintArray(layer: StyleLayer,
-                       paintArray: StructArray,
-                       statistics: PaintPropertyStatistics,
-                       start: number,
-                       length: number,
-                       featureProperties: Object): void;
-
-    defines(): Array<string>;
-
-    setUniforms(gl: WebGLRenderingContext,
-                program: Program,
-                layer: StyleLayer,
-                globalProperties: { zoom: number }): void;
+interface AttributeBinder {
+    populatePaintArray(length: number, feature: Feature, imagePositions: {[_: string]: ImagePosition}, canonical?: CanonicalTileID, formattedSection?: FormattedSection): void;
+    updatePaintArray(start: number, length: number, feature: Feature, featureState: FeatureState, imagePositions: {[_: string]: ImagePosition}): void;
+    upload(Context): void;
+    destroy(): void;
 }
 
-class ConstantBinder implements Binder {
-    name: string;
+interface UniformBinder {
+    uniformNames: Array<string>;
+    setUniform(uniform: Uniform<*>, globals: GlobalProperties, currentValue: PossiblyEvaluatedPropertyValue<*>, uniformName: string): void;
+    getBinding(context: Context, location: WebGLUniformLocation, name: string): $Shape<Uniform<*>>;
+}
+
+class ConstantBinder implements UniformBinder {
+    value: mixed;
     type: string;
-    property: string;
-    useIntegerZoom: boolean;
+    uniformNames: Array<string>;
 
-    constructor(name: string, type: string, property: string, useIntegerZoom: boolean) {
-        this.name = name;
+    constructor(value: mixed, names: Array<string>, type: string) {
+        this.value = value;
+        this.uniformNames = names.map(name => `u_${name}`);
         this.type = type;
-        this.property = property;
-        this.useIntegerZoom = useIntegerZoom;
     }
 
-    defines() {
-        return [`#define HAS_UNIFORM_u_${this.name}`];
+    setUniform(uniform: Uniform<*>, globals: GlobalProperties, currentValue: PossiblyEvaluatedPropertyValue<mixed>): void {
+        uniform.set(currentValue.constantOr(this.value));
     }
 
-    populatePaintArray() {}
-
-    setUniforms(gl: WebGLRenderingContext, program: Program, layer: StyleLayer, {zoom}: { zoom: number }) {
-        const value = layer.getPaintValue(this.property, { zoom: this.useIntegerZoom ? Math.floor(zoom) : zoom });
-        if (this.type === 'color') {
-            gl.uniform4fv(program.uniforms[`u_${this.name}`], value);
-        } else {
-            gl.uniform1f(program.uniforms[`u_${this.name}`], value);
-        }
+    getBinding(context: Context, location: WebGLUniformLocation, _: string): $Shape<Uniform<any>> {
+        return (this.type === 'color') ?
+            new UniformColor(context, location) :
+            new Uniform1f(context, location);
     }
 }
 
-class SourceFunctionBinder implements Binder {
-    name: string;
+class CrossFadedConstantBinder implements UniformBinder {
+    uniformNames: Array<string>;
+    patternFrom: ?Array<number>;
+    patternTo: ?Array<number>;
+    pixelRatioFrom: number;
+    pixelRatioTo: number;
+
+    constructor(value: mixed, names: Array<string>) {
+        this.uniformNames = names.map(name => `u_${name}`);
+        this.patternFrom = null;
+        this.patternTo = null;
+        this.pixelRatioFrom = 1.0;
+        this.pixelRatioTo = 1.0;
+    }
+
+    setConstantPatternPositions(posTo: ImagePosition, posFrom: ImagePosition) {
+        this.pixelRatioFrom = posFrom.pixelRatio;
+        this.pixelRatioTo = posTo.pixelRatio;
+        this.patternFrom = posFrom.tlbr;
+        this.patternTo = posTo.tlbr;
+    }
+
+    setUniform(uniform: Uniform<*>, globals: GlobalProperties, currentValue: PossiblyEvaluatedPropertyValue<mixed>, uniformName: string) {
+        const pos =
+            uniformName === 'u_pattern_to' ? this.patternTo :
+            uniformName === 'u_pattern_from' ? this.patternFrom :
+            uniformName === 'u_pixel_ratio_to' ? this.pixelRatioTo :
+            uniformName === 'u_pixel_ratio_from' ? this.pixelRatioFrom : null;
+        if (pos) uniform.set(pos);
+    }
+
+    getBinding(context: Context, location: WebGLUniformLocation, name: string): $Shape<Uniform<any>> {
+        return name.substr(0, 9) === 'u_pattern' ?
+            new Uniform4f(context, location) :
+            new Uniform1f(context, location);
+    }
+}
+
+class SourceExpressionBinder implements AttributeBinder {
+    expression: SourceExpression;
     type: string;
-    property: string;
+    maxValue: number;
 
-    constructor(name: string, type: string, property: string) {
-        this.name = name;
+    paintVertexArray: StructArray;
+    paintVertexAttributes: Array<StructArrayMember>;
+    paintVertexBuffer: ?VertexBuffer;
+
+    constructor(expression: SourceExpression, names: Array<string>, type: string, PaintVertexArray: Class<StructArray>) {
+        this.expression = expression;
         this.type = type;
-        this.property = property;
+        this.maxValue = 0;
+        this.paintVertexAttributes = names.map((name) => ({
+            name: `a_${name}`,
+            type: 'Float32',
+            components: type === 'color' ? 2 : 1,
+            offset: 0
+        }));
+        this.paintVertexArray = new PaintVertexArray();
     }
 
-    defines() {
-        return [];
+    populatePaintArray(newLength: number, feature: Feature, imagePositions: {[_: string]: ImagePosition}, canonical?: CanonicalTileID, formattedSection?: FormattedSection) {
+        const start = this.paintVertexArray.length;
+        const value = this.expression.evaluate(new EvaluationParameters(0), feature, {}, canonical, [], formattedSection);
+        this.paintVertexArray.resize(newLength);
+        this._setPaintValue(start, newLength, value);
     }
 
-    populatePaintArray(layer: StyleLayer,
-                       paintArray: StructArray,
-                       statistics: PaintPropertyStatistics,
-                       start: number,
-                       length: number,
-                       featureProperties: Object) {
-        const value = layer.getPaintValue(this.property, undefined, featureProperties);
+    updatePaintArray(start: number, end: number, feature: Feature, featureState: FeatureState) {
+        const value = this.expression.evaluate({zoom: 0}, feature, featureState);
+        this._setPaintValue(start, end, value);
+    }
 
+    _setPaintValue(start, end, value) {
         if (this.type === 'color') {
             const color = packColor(value);
-            for (let i = start; i < length; i++) {
-                const struct: any = paintArray.get(i);
-                struct[`a_${this.name}0`] = color[0];
-                struct[`a_${this.name}1`] = color[1];
+            for (let i = start; i < end; i++) {
+                this.paintVertexArray.emplace(i, color[0], color[1]);
             }
         } else {
-            for (let i = start; i < length; i++) {
-                const struct: any = paintArray.get(i);
-                struct[`a_${this.name}`] = value;
+            for (let i = start; i < end; i++) {
+                this.paintVertexArray.emplace(i, value);
             }
-
-            const stats = statistics[this.property];
-            stats.max = Math.max(stats.max, value);
+            this.maxValue = Math.max(this.maxValue, Math.abs(value));
         }
     }
 
-    setUniforms(gl: WebGLRenderingContext, program: Program) {
-        gl.uniform1f(program.uniforms[`a_${this.name}_t`], 0);
+    upload(context: Context) {
+        if (this.paintVertexArray && this.paintVertexArray.arrayBuffer) {
+            if (this.paintVertexBuffer && this.paintVertexBuffer.buffer) {
+                this.paintVertexBuffer.updateData(this.paintVertexArray);
+            } else {
+                this.paintVertexBuffer = context.createVertexBuffer(this.paintVertexArray, this.paintVertexAttributes, this.expression.isStateDependent);
+            }
+        }
+    }
+
+    destroy() {
+        if (this.paintVertexBuffer) {
+            this.paintVertexBuffer.destroy();
+        }
     }
 }
 
-class CompositeFunctionBinder implements Binder {
-    name: string;
+class CompositeExpressionBinder implements AttributeBinder, UniformBinder {
+    expression: CompositeExpression;
+    uniformNames: Array<string>;
     type: string;
-    property: string;
     useIntegerZoom: boolean;
     zoom: number;
+    maxValue: number;
 
-    constructor(name: string, type: string, property: string, useIntegerZoom: boolean, zoom: number) {
-        this.name = name;
+    paintVertexArray: StructArray;
+    paintVertexAttributes: Array<StructArrayMember>;
+    paintVertexBuffer: ?VertexBuffer;
+
+    constructor(expression: CompositeExpression, names: Array<string>, type: string, useIntegerZoom: boolean, zoom: number, PaintVertexArray: Class<StructArray>) {
+        this.expression = expression;
+        this.uniformNames = names.map(name => `u_${name}_t`);
         this.type = type;
-        this.property = property;
         this.useIntegerZoom = useIntegerZoom;
         this.zoom = zoom;
+        this.maxValue = 0;
+        this.paintVertexAttributes = names.map((name) => ({
+            name: `a_${name}`,
+            type: 'Float32',
+            components: type === 'color' ? 4 : 2,
+            offset: 0
+        }));
+        this.paintVertexArray = new PaintVertexArray();
     }
 
-    defines() {
-        return [];
+    populatePaintArray(newLength: number, feature: Feature, imagePositions: {[_: string]: ImagePosition}, canonical?: CanonicalTileID, formattedSection?: FormattedSection) {
+        const min = this.expression.evaluate(new EvaluationParameters(this.zoom), feature, {}, canonical, [], formattedSection);
+        const max = this.expression.evaluate(new EvaluationParameters(this.zoom + 1), feature, {}, canonical, [], formattedSection);
+        const start = this.paintVertexArray.length;
+        this.paintVertexArray.resize(newLength);
+        this._setPaintValue(start, newLength, min, max);
     }
 
-    populatePaintArray(layer: StyleLayer,
-                       paintArray: StructArray,
-                       statistics: PaintPropertyStatistics,
-                       start: number,
-                       length: number,
-                       featureProperties: Object) {
-        const min = layer.getPaintValue(this.property, {zoom: this.zoom    }, featureProperties);
-        const max = layer.getPaintValue(this.property, {zoom: this.zoom + 1}, featureProperties);
+    updatePaintArray(start: number, end: number, feature: Feature, featureState: FeatureState) {
+        const min = this.expression.evaluate({zoom: this.zoom}, feature, featureState);
+        const max = this.expression.evaluate({zoom: this.zoom + 1}, feature, featureState);
+        this._setPaintValue(start, end, min, max);
+    }
 
+    _setPaintValue(start, end, min, max) {
         if (this.type === 'color') {
             const minColor = packColor(min);
             const maxColor = packColor(max);
-            for (let i = start; i < length; i++) {
-                const struct: any = paintArray.get(i);
-                struct[`a_${this.name}0`] = minColor[0];
-                struct[`a_${this.name}1`] = minColor[1];
-                struct[`a_${this.name}2`] = maxColor[0];
-                struct[`a_${this.name}3`] = maxColor[1];
+            for (let i = start; i < end; i++) {
+                this.paintVertexArray.emplace(i, minColor[0], minColor[1], maxColor[0], maxColor[1]);
             }
         } else {
-            for (let i = start; i < length; i++) {
-                const struct: any = paintArray.get(i);
-                struct[`a_${this.name}0`] = min;
-                struct[`a_${this.name}1`] = max;
+            for (let i = start; i < end; i++) {
+                this.paintVertexArray.emplace(i, min, max);
             }
-
-            const stats = statistics[this.property];
-            stats.max = Math.max(stats.max, min, max);
+            this.maxValue = Math.max(this.maxValue, Math.abs(min), Math.abs(max));
         }
     }
 
-    setUniforms(gl: WebGLRenderingContext, program: Program, layer: StyleLayer, {zoom}: { zoom: number }) {
-        const f = interpolationFactor(this.useIntegerZoom ? Math.floor(zoom) : zoom, 1, this.zoom, this.zoom + 1);
-        gl.uniform1f(program.uniforms[`a_${this.name}_t`], f);
+    upload(context: Context) {
+        if (this.paintVertexArray && this.paintVertexArray.arrayBuffer) {
+            if (this.paintVertexBuffer && this.paintVertexBuffer.buffer) {
+                this.paintVertexBuffer.updateData(this.paintVertexArray);
+            } else {
+                this.paintVertexBuffer = context.createVertexBuffer(this.paintVertexArray, this.paintVertexAttributes, this.expression.isStateDependent);
+            }
+        }
+    }
+
+    destroy() {
+        if (this.paintVertexBuffer) {
+            this.paintVertexBuffer.destroy();
+        }
+    }
+
+    setUniform(uniform: Uniform<*>, globals: GlobalProperties): void {
+        const currentZoom = this.useIntegerZoom ? Math.floor(globals.zoom) : globals.zoom;
+        const factor = clamp(this.expression.interpolationFactor(currentZoom, this.zoom, this.zoom + 1), 0, 1);
+        uniform.set(factor);
+    }
+
+    getBinding(context: Context, location: WebGLUniformLocation, _: string): Uniform1f {
+        return new Uniform1f(context, location);
     }
 }
 
-export type SerializedProgramConfiguration = {
-    array: SerializedStructArray,
-    type: StructArrayTypeParameters,
-    statistics: PaintPropertyStatistics
-};
+class CrossFadedCompositeBinder implements AttributeBinder {
+    expression: CompositeExpression;
+    type: string;
+    useIntegerZoom: boolean;
+    zoom: number;
+    layerId: string;
+
+    zoomInPaintVertexArray: StructArray;
+    zoomOutPaintVertexArray: StructArray;
+    zoomInPaintVertexBuffer: ?VertexBuffer;
+    zoomOutPaintVertexBuffer: ?VertexBuffer;
+    paintVertexAttributes: Array<StructArrayMember>;
+
+    constructor(expression: CompositeExpression, type: string, useIntegerZoom: boolean, zoom: number, PaintVertexArray: Class<StructArray>, layerId: string) {
+        this.expression = expression;
+        this.type = type;
+        this.useIntegerZoom = useIntegerZoom;
+        this.zoom = zoom;
+        this.layerId = layerId;
+
+        this.zoomInPaintVertexArray = new PaintVertexArray();
+        this.zoomOutPaintVertexArray = new PaintVertexArray();
+    }
+
+    populatePaintArray(length: number, feature: Feature, imagePositions: {[_: string]: ImagePosition}) {
+        const start = this.zoomInPaintVertexArray.length;
+        this.zoomInPaintVertexArray.resize(length);
+        this.zoomOutPaintVertexArray.resize(length);
+        this._setPaintValues(start, length, feature.patterns && feature.patterns[this.layerId], imagePositions);
+    }
+
+    updatePaintArray(start: number, end: number, feature: Feature, featureState: FeatureState, imagePositions: {[_: string]: ImagePosition}) {
+        this._setPaintValues(start, end, feature.patterns && feature.patterns[this.layerId], imagePositions);
+    }
+
+    _setPaintValues(start, end, patterns, positions) {
+        if (!positions || !patterns) return;
+
+        const {min, mid, max} = patterns;
+        const imageMin = positions[min];
+        const imageMid = positions[mid];
+        const imageMax = positions[max];
+        if (!imageMin || !imageMid || !imageMax) return;
+
+        // We populate two paint arrays because, for cross-faded properties, we don't know which direction
+        // we're cross-fading to at layout time. In order to keep vertex attributes to a minimum and not pass
+        // unnecessary vertex data to the shaders, we determine which to upload at draw time.
+        for (let i = start; i < end; i++) {
+            this.zoomInPaintVertexArray.emplace(i,
+                imageMid.tl[0], imageMid.tl[1], imageMid.br[0], imageMid.br[1],
+                imageMin.tl[0], imageMin.tl[1], imageMin.br[0], imageMin.br[1],
+                imageMid.pixelRatio,
+                imageMin.pixelRatio,
+            );
+            this.zoomOutPaintVertexArray.emplace(i,
+                imageMid.tl[0], imageMid.tl[1], imageMid.br[0], imageMid.br[1],
+                imageMax.tl[0], imageMax.tl[1], imageMax.br[0], imageMax.br[1],
+                imageMid.pixelRatio,
+                imageMax.pixelRatio,
+            );
+        }
+    }
+
+    upload(context: Context) {
+        if (this.zoomInPaintVertexArray && this.zoomInPaintVertexArray.arrayBuffer && this.zoomOutPaintVertexArray && this.zoomOutPaintVertexArray.arrayBuffer) {
+            this.zoomInPaintVertexBuffer = context.createVertexBuffer(this.zoomInPaintVertexArray, patternAttributes.members, this.expression.isStateDependent);
+            this.zoomOutPaintVertexBuffer = context.createVertexBuffer(this.zoomOutPaintVertexArray, patternAttributes.members, this.expression.isStateDependent);
+        }
+    }
+
+    destroy() {
+        if (this.zoomOutPaintVertexBuffer) this.zoomOutPaintVertexBuffer.destroy();
+        if (this.zoomInPaintVertexBuffer) this.zoomInPaintVertexBuffer.destroy();
+    }
+}
 
 /**
  * ProgramConfiguration contains the logic for binding style layer properties and tile
@@ -215,193 +395,245 @@ export type SerializedProgramConfiguration = {
  *
  * @private
  */
-class ProgramConfiguration {
-    binders: { [string]: Binder };
+export default class ProgramConfiguration {
+    binders: {[_: string]: (AttributeBinder | UniformBinder) };
     cacheKey: string;
-    interface: ?ProgramInterface;
-    PaintVertexArray: Class<StructArray>;
 
-    layer: StyleLayer;
-    paintVertexArray: StructArray;
-    paintPropertyStatistics: PaintPropertyStatistics;
-    paintVertexBuffer: ?VertexBuffer;
+    _buffers: Array<VertexBuffer>;
 
-    constructor() {
+    constructor(layer: TypedStyleLayer, zoom: number, filterProperties: (_: string) => boolean) {
         this.binders = {};
-        this.cacheKey = '';
-    }
+        this._buffers = [];
 
-    static createDynamic(programInterface: ProgramInterface, layer: StyleLayer, zoom: number) {
-        const self = new ProgramConfiguration();
-        const attributes = [];
+        const keys = [];
 
-        for (const attribute of programInterface.paintAttributes || []) {
-            const property = attribute.property;
-            const useIntegerZoom = attribute.useIntegerZoom || false;
-            const name = attribute.name || property.replace(`${layer.type}-`, '').replace(/-/g, '_');
-            const type = layer._paintSpecifications[property].type;
+        for (const property in layer.paint._values) {
+            if (!filterProperties(property)) continue;
+            const value = layer.paint.get(property);
+            if (!(value instanceof PossiblyEvaluatedPropertyValue) || !supportsPropertyExpression(value.property.specification)) {
+                continue;
+            }
+            const names = paintAttributeNames(property, layer.type);
+            const expression = value.value;
+            const type = value.property.specification.type;
+            const useIntegerZoom = value.property.useIntegerZoom;
+            const propType = value.property.specification['property-type'];
+            const isCrossFaded = propType === 'cross-faded' || propType === 'cross-faded-data-driven';
 
-            if (layer.isPaintValueFeatureConstant(property)) {
-                self.binders[name] = new ConstantBinder(name, type, property, useIntegerZoom);
-                self.cacheKey += `/u_${name}`;
-            } else if (layer.isPaintValueZoomConstant(property)) {
-                self.binders[name] = new SourceFunctionBinder(name, type, property);
-                self.cacheKey += `/a_${name}`;
-                attributes.push({
-                    name: `a_${name}`,
-                    type: 'Float32',
-                    components: type === 'color' ? 2 : 1
-                });
+            if (expression.kind === 'constant') {
+                this.binders[property] = isCrossFaded ?
+                    new CrossFadedConstantBinder(expression.value, names) :
+                    new ConstantBinder(expression.value, names, type);
+                keys.push(`/u_${property}`);
+
+            } else if (expression.kind === 'source' || isCrossFaded) {
+                const StructArrayLayout = layoutType(property, type, 'source');
+                this.binders[property] = isCrossFaded ?
+                    new CrossFadedCompositeBinder(expression, type, useIntegerZoom, zoom, StructArrayLayout, layer.id) :
+                    new SourceExpressionBinder(expression, names, type, StructArrayLayout);
+                keys.push(`/a_${property}`);
+
             } else {
-                self.binders[name] = new CompositeFunctionBinder(name, type, property, useIntegerZoom, zoom);
-                self.cacheKey += `/z_${name}`;
-                attributes.push({
-                    name: `a_${name}`,
-                    type: 'Float32',
-                    components: type === 'color' ? 4 : 2
-                });
+                const StructArrayLayout = layoutType(property, type, 'composite');
+                this.binders[property] = new CompositeExpressionBinder(expression, names, type, useIntegerZoom, zoom, StructArrayLayout);
+                keys.push(`/z_${property}`);
             }
         }
 
-        self.PaintVertexArray = createVertexArrayType(attributes);
-        self.interface = programInterface;
-        self.layer = layer;
-
-        return self;
+        this.cacheKey = keys.sort().join('');
     }
 
-    static createBasicFill() {
-        const self = new ProgramConfiguration();
-
-        self.binders.color = new ConstantBinder('color', 'color', 'fill-color', false);
-        self.cacheKey += `/u_color`;
-
-        self.binders.opacity = new ConstantBinder('opacity', 'number', 'fill-opacity', false);
-        self.cacheKey += `/u_opacity`;
-
-        return self;
+    getMaxValue(property: string): number {
+        const binder = this.binders[property];
+        return binder instanceof SourceExpressionBinder || binder instanceof CompositeExpressionBinder ? binder.maxValue : 0;
     }
 
-    // Since this object is accessed frequently during populatePaintArray, it
-    // is helpful to initialize it ahead of time to avoid recalculating
-    // 'hidden class' optimizations to take effect
-    createPaintPropertyStatistics() {
-        const paintPropertyStatistics: PaintPropertyStatistics = {};
-        for (const name in this.binders) {
-            paintPropertyStatistics[this.binders[name].property] = {
-                max: -Infinity
-            };
+    populatePaintArrays(newLength: number, feature: Feature, imagePositions: {[_: string]: ImagePosition}, canonical?: CanonicalTileID, formattedSection?: FormattedSection) {
+        for (const property in this.binders) {
+            const binder = this.binders[property];
+            if (binder instanceof SourceExpressionBinder || binder instanceof CompositeExpressionBinder || binder instanceof CrossFadedCompositeBinder)
+                (binder: AttributeBinder).populatePaintArray(newLength, feature, imagePositions, canonical, formattedSection);
         }
-        return paintPropertyStatistics;
+    }
+    setConstantPatternPositions(posTo: ImagePosition, posFrom: ImagePosition) {
+        for (const property in this.binders) {
+            const binder = this.binders[property];
+            if (binder instanceof CrossFadedConstantBinder)
+                binder.setConstantPatternPositions(posTo, posFrom);
+        }
     }
 
-    populatePaintArray(length: number, featureProperties: Object) {
-        const paintArray = this.paintVertexArray;
-        if (paintArray.bytesPerElement === 0) return;
+    updatePaintArrays(featureStates: FeatureStates, featureMap: FeaturePositionMap, vtLayer: VectorTileLayer, layer: TypedStyleLayer, imagePositions: {[_: string]: ImagePosition}): boolean {
+        let dirty: boolean = false;
+        for (const id in featureStates) {
+            const positions = featureMap.getPositions(id);
 
-        const start = paintArray.length;
-        paintArray.resize(length);
+            for (const pos of positions) {
+                const feature = vtLayer.feature(pos.index);
 
-        for (const name in this.binders) {
-            this.binders[name].populatePaintArray(
-                this.layer, paintArray,
-                this.paintPropertyStatistics,
-                start, length,
-                featureProperties);
+                for (const property in this.binders) {
+                    const binder = this.binders[property];
+                    if ((binder instanceof SourceExpressionBinder || binder instanceof CompositeExpressionBinder ||
+                         binder instanceof CrossFadedCompositeBinder) && (binder: any).expression.isStateDependent === true) {
+                        //AHM: Remove after https://github.com/mapbox/mapbox-gl-js/issues/6255
+                        const value = layer.paint.get(property);
+                        (binder: any).expression = value.value;
+                        (binder: AttributeBinder).updatePaintArray(pos.start, pos.end, feature, featureStates[id], imagePositions);
+                        dirty = true;
+                    }
+                }
+            }
         }
+        return dirty;
     }
 
     defines(): Array<string> {
         const result = [];
-        for (const name in this.binders) {
-            result.push.apply(result, this.binders[name].defines());
+        for (const property in this.binders) {
+            const binder = this.binders[property];
+            if (binder instanceof ConstantBinder || binder instanceof CrossFadedConstantBinder) {
+                result.push(...binder.uniformNames.map(name => `#define HAS_UNIFORM_${name}`));
+            }
         }
         return result;
     }
 
-    setUniforms(gl: WebGLRenderingContext, program: Program, layer: StyleLayer, globalProperties: { zoom: number }) {
-        for (const name in this.binders) {
-            this.binders[name].setUniforms(gl, program, layer, globalProperties);
+    getBinderAttributes(): Array<string> {
+        const result = [];
+        for (const property in this.binders) {
+            const binder = this.binders[property];
+            if (binder instanceof SourceExpressionBinder || binder instanceof CompositeExpressionBinder) {
+                for (let i = 0; i < binder.paintVertexAttributes.length; i++) {
+                    result.push(binder.paintVertexAttributes[i].name);
+                }
+            } else if (binder instanceof CrossFadedCompositeBinder) {
+                for (let i = 0; i < patternAttributes.members.length; i++) {
+                    result.push(patternAttributes.members[i].name);
+                }
+            }
+        }
+        return result;
+    }
+
+    getBinderUniforms(): Array<string> {
+        const uniforms = [];
+        for (const property in this.binders) {
+            const binder = this.binders[property];
+            if (binder instanceof ConstantBinder || binder instanceof CrossFadedConstantBinder || binder instanceof CompositeExpressionBinder) {
+                for (const uniformName of binder.uniformNames) {
+                    uniforms.push(uniformName);
+                }
+            }
+        }
+        return uniforms;
+    }
+
+    getPaintVertexBuffers(): Array<VertexBuffer> {
+        return this._buffers;
+    }
+
+    getUniforms(context: Context, locations: UniformLocations): Array<BinderUniform> {
+        const uniforms = [];
+        for (const property in this.binders) {
+            const binder = this.binders[property];
+            if (binder instanceof ConstantBinder || binder instanceof CrossFadedConstantBinder || binder instanceof CompositeExpressionBinder) {
+                for (const name of binder.uniformNames) {
+                    if (locations[name]) {
+                        const binding = binder.getBinding(context, locations[name], name);
+                        uniforms.push({name, property, binding});
+                    }
+                }
+            }
+        }
+        return uniforms;
+    }
+
+    setUniforms<Properties: Object>(context: Context, binderUniforms: Array<BinderUniform>, properties: PossiblyEvaluated<Properties>, globals: GlobalProperties) {
+        // Uniform state bindings are owned by the Program, but we set them
+        // from within the ProgramConfiguraton's binder members.
+        for (const {name, property, binding} of binderUniforms) {
+            (this.binders[property]: any).setUniform(binding, globals, properties.get(property), name);
         }
     }
 
-    serialize(transferables?: Array<Transferable>): ?SerializedProgramConfiguration {
-        if (this.paintVertexArray.length === 0) {
-            return null;
+    updatePaintBuffers(crossfade?: CrossfadeParameters) {
+        this._buffers = [];
+
+        for (const property in this.binders) {
+            const binder = this.binders[property];
+            if (crossfade && binder instanceof CrossFadedCompositeBinder) {
+                const patternVertexBuffer = crossfade.fromScale === 2 ? binder.zoomInPaintVertexBuffer : binder.zoomOutPaintVertexBuffer;
+                if (patternVertexBuffer) this._buffers.push(patternVertexBuffer);
+
+            } else if ((binder instanceof SourceExpressionBinder || binder instanceof CompositeExpressionBinder) && binder.paintVertexBuffer) {
+                this._buffers.push(binder.paintVertexBuffer);
+            }
         }
-        return {
-            array: this.paintVertexArray.serialize(transferables),
-            type: this.paintVertexArray.constructor.serialize(),
-            statistics: this.paintPropertyStatistics
-        };
     }
 
-    static deserialize(programInterface: ProgramInterface, layer: StyleLayer, zoom: number, serialized: ?SerializedProgramConfiguration) {
-        const self = ProgramConfiguration.createDynamic(programInterface, layer, zoom);
-        if (serialized) {
-            self.PaintVertexArray = createVertexArrayType(serialized.type.members);
-            self.paintVertexArray = new self.PaintVertexArray(serialized.array);
-            self.paintPropertyStatistics = serialized.statistics;
+    upload(context: Context) {
+        for (const property in this.binders) {
+            const binder = this.binders[property];
+            if (binder instanceof SourceExpressionBinder || binder instanceof CompositeExpressionBinder || binder instanceof CrossFadedCompositeBinder)
+                binder.upload(context);
         }
-        return self;
-    }
-
-    upload(gl: WebGLRenderingContext) {
-        if (this.paintVertexArray) {
-            this.paintVertexBuffer = new VertexBuffer(gl, this.paintVertexArray);
-        }
+        this.updatePaintBuffers();
     }
 
     destroy() {
-        if (this.paintVertexBuffer) {
-            this.paintVertexBuffer.destroy();
+        for (const property in this.binders) {
+            const binder = this.binders[property];
+            if (binder instanceof SourceExpressionBinder || binder instanceof CompositeExpressionBinder || binder instanceof CrossFadedCompositeBinder)
+                binder.destroy();
         }
     }
 }
 
-class ProgramConfigurationSet {
-    programConfigurations: {[string]: ProgramConfiguration};
+export class ProgramConfigurationSet<Layer: TypedStyleLayer> {
+    programConfigurations: {[_: string]: ProgramConfiguration};
+    needsUpload: boolean;
+    _featureMap: FeaturePositionMap;
+    _bufferOffset: number;
 
-    constructor(programInterface: ProgramInterface, layers: Array<StyleLayer>, zoom: number, arrays?: {+[string]: ?SerializedProgramConfiguration}) {
+    constructor(layers: $ReadOnlyArray<Layer>, zoom: number, filterProperties: (_: string) => boolean = () => true) {
         this.programConfigurations = {};
-        if (arrays) {
-            for (const layer of layers) {
-                this.programConfigurations[layer.id] = ProgramConfiguration.deserialize(programInterface, layer, zoom, arrays[layer.id]);
-            }
-        } else {
-            for (const layer of layers) {
-                const programConfiguration = ProgramConfiguration.createDynamic(programInterface, layer, zoom);
-                programConfiguration.paintVertexArray = new programConfiguration.PaintVertexArray();
-                programConfiguration.paintPropertyStatistics = programConfiguration.createPaintPropertyStatistics();
-                this.programConfigurations[layer.id] = programConfiguration;
-            }
+        for (const layer of layers) {
+            this.programConfigurations[layer.id] = new ProgramConfiguration(layer, zoom, filterProperties);
         }
+        this.needsUpload = false;
+        this._featureMap = new FeaturePositionMap();
+        this._bufferOffset = 0;
     }
 
-    populatePaintArrays(length: number, featureProperties: Object) {
+    populatePaintArrays(length: number, feature: Feature, index: number, imagePositions: {[_: string]: ImagePosition}, canonical: CanonicalTileID, formattedSection?: FormattedSection) {
         for (const key in this.programConfigurations) {
-            this.programConfigurations[key].populatePaintArray(length, featureProperties);
+            this.programConfigurations[key].populatePaintArrays(length, feature, imagePositions, canonical, formattedSection);
         }
+
+        if (feature.id !== undefined) {
+            this._featureMap.add(feature.id, index, this._bufferOffset, length);
+        }
+        this._bufferOffset = length;
+
+        this.needsUpload = true;
     }
 
-    serialize(transferables?: Array<Transferable>) {
-        const result = {};
-        for (const layerId in this.programConfigurations) {
-            const serialized = this.programConfigurations[layerId].serialize(transferables);
-            if (!serialized) continue;
-            result[layerId] = serialized;
+    updatePaintArrays(featureStates: FeatureStates, vtLayer: VectorTileLayer, layers: $ReadOnlyArray<TypedStyleLayer>, imagePositions: {[_: string]: ImagePosition}) {
+        for (const layer of layers) {
+            this.needsUpload = this.programConfigurations[layer.id].updatePaintArrays(featureStates, this._featureMap, vtLayer, layer, imagePositions) || this.needsUpload;
         }
-        return result;
     }
 
     get(layerId: string) {
         return this.programConfigurations[layerId];
     }
 
-    upload(gl: WebGLRenderingContext) {
+    upload(context: Context) {
+        if (!this.needsUpload) return;
         for (const layerId in this.programConfigurations) {
-            this.programConfigurations[layerId].upload(gl);
+            this.programConfigurations[layerId].upload(context);
         }
+        this.needsUpload = false;
     }
 
     destroy() {
@@ -411,7 +643,66 @@ class ProgramConfigurationSet {
     }
 }
 
-module.exports = {
-    ProgramConfiguration,
-    ProgramConfigurationSet
-};
+function paintAttributeNames(property, type) {
+    const attributeNameExceptions = {
+        'text-opacity': ['opacity'],
+        'icon-opacity': ['opacity'],
+        'text-color': ['fill_color'],
+        'icon-color': ['fill_color'],
+        'text-halo-color': ['halo_color'],
+        'icon-halo-color': ['halo_color'],
+        'text-halo-blur': ['halo_blur'],
+        'icon-halo-blur': ['halo_blur'],
+        'text-halo-width': ['halo_width'],
+        'icon-halo-width': ['halo_width'],
+        'line-gap-width': ['gapwidth'],
+        'line-pattern': ['pattern_to', 'pattern_from', 'pixel_ratio_to', 'pixel_ratio_from'],
+        'fill-pattern': ['pattern_to', 'pattern_from', 'pixel_ratio_to', 'pixel_ratio_from'],
+        'fill-extrusion-pattern': ['pattern_to', 'pattern_from', 'pixel_ratio_to', 'pixel_ratio_from'],
+    };
+
+    return attributeNameExceptions[property] || [property.replace(`${type}-`, '').replace(/-/g, '_')];
+}
+
+function getLayoutException(property) {
+    const propertyExceptions = {
+        'line-pattern':{
+            'source': PatternLayoutArray,
+            'composite': PatternLayoutArray
+        },
+        'fill-pattern': {
+            'source': PatternLayoutArray,
+            'composite': PatternLayoutArray
+        },
+        'fill-extrusion-pattern':{
+            'source': PatternLayoutArray,
+            'composite': PatternLayoutArray
+        }
+    };
+
+    return propertyExceptions[property];
+}
+
+function layoutType(property, type, binderType) {
+    const defaultLayouts = {
+        'color': {
+            'source': StructArrayLayout2f8,
+            'composite': StructArrayLayout4f16
+        },
+        'number': {
+            'source': StructArrayLayout1f4,
+            'composite': StructArrayLayout2f8
+        }
+    };
+
+    const layoutException = getLayoutException(property);
+    return  layoutException && layoutException[binderType] || defaultLayouts[type][binderType];
+}
+
+register('ConstantBinder', ConstantBinder);
+register('CrossFadedConstantBinder', CrossFadedConstantBinder);
+register('SourceExpressionBinder', SourceExpressionBinder);
+register('CrossFadedCompositeBinder', CrossFadedCompositeBinder);
+register('CompositeExpressionBinder', CompositeExpressionBinder);
+register('ProgramConfiguration', ProgramConfiguration, {omit: ['_buffers']});
+register('ProgramConfigurationSet', ProgramConfigurationSet);

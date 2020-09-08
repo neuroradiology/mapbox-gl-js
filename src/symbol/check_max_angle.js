@@ -1,6 +1,6 @@
 // @flow
 
-module.exports = checkMaxAngle;
+export default checkMaxAngle;
 
 import type Point from '@mapbox/point-geometry';
 import type Anchor from './anchor';
@@ -60,7 +60,7 @@ function checkMaxAngle(line: Array<Point>, anchor: Anchor, labelLength: number, 
 
         recentCorners.push({
             distance: anchorDistance,
-            angleDelta: angleDelta
+            angleDelta
         });
         recentAngleDelta += angleDelta;
 

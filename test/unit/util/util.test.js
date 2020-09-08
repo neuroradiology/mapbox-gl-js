@@ -1,34 +1,25 @@
-'use strict';
 // @flow
 
-const test = require('mapbox-gl-js-test').test;
-const Coordinate = require('../../../src/geo/coordinate');
-const util = require('../../../src/util/util');
-const Point = require('@mapbox/point-geometry');
+import {test} from '../../util/test';
+
+import {easeCubicInOut, keysDifference, extend, pick, uniqueId, bindAll, asyncAll, clamp, wrap, bezier, endsWith, mapObject, filterObject, deepEqual, clone, arraysIntersect, isCounterClockwise, isClosedPolygon, parseCacheControl, uuid, validateUuid, nextPowerOfTwo, isPowerOfTwo} from '../../../src/util/util';
+import Point from '@mapbox/point-geometry';
 
 test('util', (t) => {
-    t.equal(util.easeCubicInOut(0), 0, 'easeCubicInOut=0');
-    t.equal(util.easeCubicInOut(0.2), 0.03200000000000001);
-    t.equal(util.easeCubicInOut(0.5), 0.5, 'easeCubicInOut=0.5');
-    t.equal(util.easeCubicInOut(1), 1, 'easeCubicInOut=1');
-    t.deepEqual(util.keysDifference({a:1}, {}), ['a'], 'keysDifference');
-    t.deepEqual(util.keysDifference({a:1}, {a:1}), [], 'keysDifference');
-    t.deepEqual(util.extend({a:1}, {b:2}), {a:1, b:2}, 'extend');
-    t.deepEqual(util.pick({a:1, b:2, c:3}, ['a', 'c']), {a:1, c:3}, 'pick');
-    t.deepEqual(util.pick({a:1, b:2, c:3}, ['a', 'c', 'd']), {a:1, c:3}, 'pick');
-    t.ok(typeof util.uniqueId() === 'number', 'uniqueId');
-
-    t.test('getCoordinatesCenter', (t) => {
-        t.deepEqual(util.getCoordinatesCenter([
-            new Coordinate(0, 0, 2),
-            new Coordinate(1, 1, 2)
-        ]), new Coordinate(0.5, 0.5, 0));
-        t.end();
-    });
+    t.equal(easeCubicInOut(0), 0, 'easeCubicInOut=0');
+    t.equal(easeCubicInOut(0.2), 0.03200000000000001);
+    t.equal(easeCubicInOut(0.5), 0.5, 'easeCubicInOut=0.5');
+    t.equal(easeCubicInOut(1), 1, 'easeCubicInOut=1');
+    t.deepEqual(keysDifference({a:1}, {}), ['a'], 'keysDifference');
+    t.deepEqual(keysDifference({a:1}, {a:1}), [], 'keysDifference');
+    t.deepEqual(extend({a:1}, {b:2}), {a:1, b:2}, 'extend');
+    t.deepEqual(pick({a:1, b:2, c:3}, ['a', 'c']), {a:1, c:3}, 'pick');
+    t.deepEqual(pick({a:1, b:2, c:3}, ['a', 'c', 'd']), {a:1, c:3}, 'pick');
+    t.ok(typeof uniqueId() === 'number', 'uniqueId');
 
     t.test('bindAll', (t) => {
         function MyClass() {
-            util.bindAll(['ontimer'], this);
+            bindAll(['ontimer'], this);
             this.name = 'Tom';
         }
         MyClass.prototype.ontimer = function() {
@@ -40,7 +31,7 @@ test('util', (t) => {
     });
 
     t.test('asyncAll - sync', (t) => {
-        t.equal(util.asyncAll([0, 1, 2], (data, callback) => {
+        t.equal(asyncAll([0, 1, 2], (data, callback) => {
             callback(null, data);
         }, (err, results) => {
             t.ifError(err);
@@ -50,7 +41,7 @@ test('util', (t) => {
     });
 
     t.test('asyncAll - async', (t) => {
-        t.equal(util.asyncAll([4, 0, 1, 2], (data, callback) => {
+        t.equal(asyncAll([4, 0, 1, 2], (data, callback) => {
             setTimeout(() => {
                 callback(null, data);
             }, data);
@@ -62,7 +53,7 @@ test('util', (t) => {
     });
 
     t.test('asyncAll - error', (t) => {
-        t.equal(util.asyncAll([4, 0, 1, 2], (data, callback) => {
+        t.equal(asyncAll([4, 0, 1, 2], (data, callback) => {
             setTimeout(() => {
                 callback(new Error('hi'), data);
             }, data);
@@ -74,7 +65,7 @@ test('util', (t) => {
     });
 
     t.test('asyncAll - empty', (t) => {
-        t.equal(util.asyncAll([], (data, callback) => {
+        t.equal(asyncAll([], (data, callback) => {
             callback(null, 'foo');
         }, (err, results) => {
             t.ifError(err);
@@ -83,24 +74,57 @@ test('util', (t) => {
         t.end();
     });
 
+    t.test('isPowerOfTwo', (t) => {
+        t.equal(isPowerOfTwo(1), true);
+        t.equal(isPowerOfTwo(2), true);
+        t.equal(isPowerOfTwo(256), true);
+        t.equal(isPowerOfTwo(-256), false);
+        t.equal(isPowerOfTwo(0), false);
+        t.equal(isPowerOfTwo(-42), false);
+        t.equal(isPowerOfTwo(42), false);
+        t.end();
+    });
+
+    t.test('nextPowerOfTwo', (t) => {
+        t.equal(nextPowerOfTwo(1), 1);
+        t.equal(nextPowerOfTwo(2), 2);
+        t.equal(nextPowerOfTwo(256), 256);
+        t.equal(nextPowerOfTwo(-256), 1);
+        t.equal(nextPowerOfTwo(0), 1);
+        t.equal(nextPowerOfTwo(-42), 1);
+        t.equal(nextPowerOfTwo(42), 64);
+        t.end();
+    });
+
+    t.test('nextPowerOfTwo', (t) => {
+        t.equal(isPowerOfTwo(nextPowerOfTwo(1)), true);
+        t.equal(isPowerOfTwo(nextPowerOfTwo(2)), true);
+        t.equal(isPowerOfTwo(nextPowerOfTwo(256)), true);
+        t.equal(isPowerOfTwo(nextPowerOfTwo(-256)), true);
+        t.equal(isPowerOfTwo(nextPowerOfTwo(0)), true);
+        t.equal(isPowerOfTwo(nextPowerOfTwo(-42)), true);
+        t.equal(isPowerOfTwo(nextPowerOfTwo(42)), true);
+        t.end();
+    });
+
     t.test('clamp', (t) => {
-        t.equal(util.clamp(0, 0, 1), 0);
-        t.equal(util.clamp(1, 0, 1), 1);
-        t.equal(util.clamp(200, 0, 180), 180);
-        t.equal(util.clamp(-200, 0, 180), 0);
+        t.equal(clamp(0, 0, 1), 0);
+        t.equal(clamp(1, 0, 1), 1);
+        t.equal(clamp(200, 0, 180), 180);
+        t.equal(clamp(-200, 0, 180), 0);
         t.end();
     });
 
     t.test('wrap', (t) => {
-        t.equal(util.wrap(0, 0, 1), 1);
-        t.equal(util.wrap(1, 0, 1), 1);
-        t.equal(util.wrap(200, 0, 180), 20);
-        t.equal(util.wrap(-200, 0, 180), 160);
+        t.equal(wrap(0, 0, 1), 1);
+        t.equal(wrap(1, 0, 1), 1);
+        t.equal(wrap(200, 0, 180), 20);
+        t.equal(wrap(-200, 0, 180), 160);
         t.end();
     });
 
     t.test('bezier', (t) => {
-        const curve = util.bezier(0, 0, 0.25, 1);
+        const curve = bezier(0, 0, 0.25, 1);
         t.ok(curve instanceof Function, 'returns a function');
         t.equal(curve(0), 0);
         t.equal(curve(1), 1);
@@ -110,10 +134,10 @@ test('util', (t) => {
 
     t.test('asyncAll', (t) => {
         let expect = 1;
-        util.asyncAll([], (callback) => { callback(); }, () => {
+        asyncAll([], (callback) => { callback(); }, () => {
             t.ok('immediate callback');
         });
-        util.asyncAll([1, 2, 3], (number, callback) => {
+        asyncAll([1, 2, 3], (number, callback) => {
             t.equal(number, expect++);
             t.ok(callback instanceof Function);
             callback(null, 0);
@@ -123,16 +147,16 @@ test('util', (t) => {
     });
 
     t.test('endsWith', (t) => {
-        t.ok(util.endsWith('mapbox', 'box'));
-        t.notOk(util.endsWith('mapbox', 'map'));
+        t.ok(endsWith('mapbox', 'box'));
+        t.notOk(endsWith('mapbox', 'map'));
         t.end();
     });
 
     t.test('mapObject', (t) => {
         t.plan(6);
-        t.deepEqual(util.mapObject({}, () => { t.ok(false); }), {});
+        t.deepEqual(mapObject({}, () => { t.ok(false); }), {});
         const that = {};
-        t.deepEqual(util.mapObject({map: 'box'}, function(value, key, object) {
+        t.deepEqual(mapObject({map: 'box'}, function(value, key, object) {
             t.equal(value, 'box');
             t.equal(key, 'map');
             t.deepEqual(object, {map: 'box'});
@@ -143,16 +167,16 @@ test('util', (t) => {
 
     t.test('filterObject', (t) => {
         t.plan(6);
-        t.deepEqual(util.filterObject({}, () => { t.ok(false); }), {});
+        t.deepEqual(filterObject({}, () => { t.ok(false); }), {});
         const that = {};
-        util.filterObject({map: 'box'}, function(value, key, object) {
+        filterObject({map: 'box'}, function(value, key, object) {
             t.equal(value, 'box');
             t.equal(key, 'map');
             t.deepEqual(object, {map: 'box'});
             t.equal(this, that);
             return true;
         }, that);
-        t.deepEqual(util.filterObject({map: 'box', box: 'map'}, (value) => {
+        t.deepEqual(filterObject({map: 'box', box: 'map'}, (value) => {
             return value === 'box';
         }), {map: 'box'});
         t.end();
@@ -170,11 +194,11 @@ test('util', (t) => {
         const c = JSON.parse(JSON.stringify(a));
         c.bar.lol[0] = "z";
 
-        t.ok(util.deepEqual(a, b));
-        t.notOk(util.deepEqual(a, c));
-        t.notOk(util.deepEqual(a, null));
-        t.notOk(util.deepEqual(null, c));
-        t.ok(util.deepEqual(null, null));
+        t.ok(deepEqual(a, b));
+        t.notOk(deepEqual(a, c));
+        t.notOk(deepEqual(a, null));
+        t.notOk(deepEqual(null, c));
+        t.ok(deepEqual(null, null));
 
         t.end();
     });
@@ -182,7 +206,7 @@ test('util', (t) => {
     t.test('clone', (t) => {
         t.test('array', (t) => {
             const input = [false, 1, 'two'];
-            const output = util.clone(input);
+            const output = clone(input);
             t.notEqual(input, output);
             t.deepEqual(input, output);
             t.end();
@@ -190,7 +214,7 @@ test('util', (t) => {
 
         t.test('object', (t) => {
             const input = {a: false, b: 1, c: 'two'};
-            const output = util.clone(input);
+            const output = clone(input);
             t.notEqual(input, output);
             t.deepEqual(input, output);
             t.end();
@@ -198,7 +222,7 @@ test('util', (t) => {
 
         t.test('deep object', (t) => {
             const input = {object: {a: false, b: 1, c: 'two'}};
-            const output = util.clone(input);
+            const output = clone(input);
             t.notEqual(input.object, output.object);
             t.deepEqual(input.object, output.object);
             t.end();
@@ -206,7 +230,7 @@ test('util', (t) => {
 
         t.test('deep array', (t) => {
             const input = {array: [false, 1, 'two']};
-            const output = util.clone(input);
+            const output = clone(input);
             t.notEqual(input.array, output.array);
             t.deepEqual(input.array, output.array);
             t.end();
@@ -220,7 +244,7 @@ test('util', (t) => {
             const a = ["1", "2", "3"];
             const b = ["5", "4", "3"];
 
-            t.equal(util.arraysIntersect(a, b), true);
+            t.equal(arraysIntersect(a, b), true);
             t.end();
         });
 
@@ -228,7 +252,7 @@ test('util', (t) => {
             const a = ["1", "2", "3"];
             const b = ["4", "5", "6"];
 
-            t.equal(util.arraysIntersect(a, b), false);
+            t.equal(arraysIntersect(a, b), false);
             t.end();
         });
 
@@ -241,7 +265,7 @@ test('util', (t) => {
             const b = new Point(1, 0);
             const c = new Point(1, 1);
 
-            t.equal(util.isCounterClockwise(a, b, c), true);
+            t.equal(isCounterClockwise(a, b, c), true);
             t.end();
         });
 
@@ -250,7 +274,7 @@ test('util', (t) => {
             const b = new Point(1, 0);
             const c = new Point(1, 1);
 
-            t.equal(util.isCounterClockwise(c, b, a), false);
+            t.equal(isCounterClockwise(c, b, a), false);
             t.end();
         });
 
@@ -261,21 +285,21 @@ test('util', (t) => {
         t.test('not enough points', (t) => {
             const polygon = [new Point(0, 0), new Point(1, 0), new Point(0, 1)];
 
-            t.equal(util.isClosedPolygon(polygon), false);
+            t.equal(isClosedPolygon(polygon), false);
             t.end();
         });
 
         t.test('not equal first + last point', (t) => {
             const polygon = [new Point(0, 0), new Point(1, 0), new Point(0, 1), new Point(1, 1)];
 
-            t.equal(util.isClosedPolygon(polygon), false);
+            t.equal(isClosedPolygon(polygon), false);
             t.end();
         });
 
         t.test('closed polygon', (t) => {
             const polygon = [new Point(0, 0), new Point(1, 0), new Point(1, 1), new Point(0, 1), new Point(0, 0)];
 
-            t.equal(util.isClosedPolygon(polygon), true);
+            t.equal(isClosedPolygon(polygon), true);
             t.end();
         });
 
@@ -284,19 +308,27 @@ test('util', (t) => {
 
     t.test('parseCacheControl', (t) => {
         t.test('max-age', (t) => {
-            t.deepEqual(util.parseCacheControl('max-age=123456789'), {
+            t.deepEqual(parseCacheControl('max-age=123456789'), {
                 'max-age': 123456789
             }, 'returns valid max-age header');
 
-            t.deepEqual(util.parseCacheControl('max-age=1000'), {
+            t.deepEqual(parseCacheControl('max-age=1000'), {
                 'max-age': 1000
             }, 'returns valid max-age header');
 
-            t.deepEqual(util.parseCacheControl('max-age=null'), {}, 'does not return invalid max-age header');
+            t.deepEqual(parseCacheControl('max-age=null'), {}, 'does not return invalid max-age header');
 
             t.end();
         });
 
+        t.end();
+    });
+
+    t.test('validateUuid', (t) => {
+        t.true(validateUuid(uuid()));
+        t.false(validateUuid(uuid().substr(0, 10)));
+        t.false(validateUuid('foobar'));
+        t.false(validateUuid(null));
         t.end();
     });
 

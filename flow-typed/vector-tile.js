@@ -1,8 +1,13 @@
+import type Pbf from 'pbf';
+import type Point from '@mapbox/point-geometry';
+import type { GeoJSONFeature } from '@mapbox/geojson-types';
+
 declare interface VectorTile {
-    layers: {[string]: VectorTileLayer};
+    layers: {[_: string]: VectorTileLayer};
 }
 
 declare interface VectorTileLayer {
+    version?: number;
     name: string;
     extent: number;
     length: number;
@@ -13,10 +18,9 @@ declare interface VectorTileFeature {
     extent: number;
     type: 1 | 2 | 3;
     id: number;
-    properties: {[string]: string | number | boolean};
+    properties: {[_: string]: string | number | boolean};
 
     loadGeometry(): Array<Array<Point>>;
-    bbox(): [number, number, number, number];
     toGeoJSON(x: number, y: number, z: number): GeoJSONFeature;
 }
 

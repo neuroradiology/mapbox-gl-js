@@ -1,8 +1,14 @@
 // @flow
 
-const UnitBezier = require('@mapbox/unitbezier');
-const Coordinate = require('../geo/coordinate');
-const Point = require('@mapbox/point-geometry');
+import UnitBezier from '@mapbox/unitbezier';
+
+import Point from '@mapbox/point-geometry';
+import window from './window';
+
+import type {Callback} from '../types/callback';
+
+// Number.MAX_SAFE_INTEGER not available in IE
+export const MAX_SAFE_INTEGER = Math.pow(2, 53) - 1;
 
 /**
  * @module util
@@ -16,13 +22,13 @@ const Point = require('@mapbox/point-geometry');
  *
  * @private
  */
-exports.easeCubicInOut = function(t: number): number {
+export function easeCubicInOut(t: number): number {
     if (t <= 0) return 0;
     if (t >= 1) return 1;
     const t2 = t * t,
         t3 = t2 * t;
     return 4 * (t < 0.5 ? t3 : 3 * (t - t2) + t3 - 0.75);
-};
+}
 
 /**
  * Given given (x, y), (x1, y1) control points for a bezier curve,
@@ -34,12 +40,12 @@ exports.easeCubicInOut = function(t: number): number {
  * @param p2y control point 2 y coordinate
  * @private
  */
-exports.bezier = function(p1x: number, p1y: number, p2x: number, p2y: number): (t: number) => number {
+export function bezier(p1x: number, p1y: number, p2x: number, p2y: number): (t: number) => number {
     const bezier = new UnitBezier(p1x, p1y, p2x, p2y);
     return function(t: number) {
         return bezier.solve(t);
     };
-};
+}
 
 /**
  * A default bezier-curve powered easing function with
@@ -47,7 +53,7 @@ exports.bezier = function(p1x: number, p1y: number, p2x: number, p2y: number): (
  *
  * @private
  */
-exports.ease = exports.bezier(0.25, 0.1, 0.25, 1);
+export const ease = bezier(0.25, 0.1, 0.25, 1);
 
 /**
  * constrain n to the given range via min + max
@@ -58,9 +64,9 @@ exports.ease = exports.bezier(0.25, 0.1, 0.25, 1);
  * @returns the clamped value
  * @private
  */
-exports.clamp = function (n: number, min: number, max: number): number {
+export function clamp(n: number, min: number, max: number): number {
     return Math.min(max, Math.max(min, n));
-};
+}
 
 /**
  * constrain n to the given range, excluding the minimum, via modular arithmetic
@@ -71,11 +77,11 @@ exports.clamp = function (n: number, min: number, max: number): number {
  * @returns constrained number
  * @private
  */
-exports.wrap = function (n: number, min: number, max: number): number {
+export function wrap(n: number, min: number, max: number): number {
     const d = max - min;
     const w = ((n - min) % d + d) % d + min;
     return (w === min) ? max : w;
-};
+}
 
 /*
  * Call an asynchronous function on an array of arguments,
@@ -87,10 +93,10 @@ exports.wrap = function (n: number, min: number, max: number): number {
  * called with an array, containing the results of each async call.
  * @private
  */
-exports.asyncAll = function<Item, Result> (
+export function asyncAll<Item, Result>(
     array: Array<Item>,
-    fn: (item: Item, fnCallback: (error: Error | null, result: Result) => void) => void,
-    callback: (error: Error | null, results: Array<Result>) => void
+    fn: (item: Item, fnCallback: Callback<Result>) => void,
+    callback: Callback<Array<Result>>
 ) {
     if (!array.length) { return callback(null, []); }
     let remaining = array.length;
@@ -99,11 +105,11 @@ exports.asyncAll = function<Item, Result> (
     array.forEach((item, i) => {
         fn(item, (err, result) => {
             if (err) error = err;
-            results[i] = result;
+            results[i] = ((result: any): Result); // https://github.com/facebook/flow/issues/2123
             if (--remaining === 0) callback(error, results);
         });
     });
-};
+}
 
 /*
  * Polyfill for Object.values. Not fully spec compliant, but we don't
@@ -111,13 +117,13 @@ exports.asyncAll = function<Item, Result> (
  *
  * @private
  */
-exports.values = function<T>(obj: {[key: string]: T}): Array<T> {
+export function values<T>(obj: {[key: string]: T}): Array<T> {
     const result = [];
     for (const k in obj) {
         result.push(obj[k]);
     }
     return result;
-};
+}
 
 /*
  * Compute the difference between the keys in one object and the keys
@@ -126,7 +132,7 @@ exports.values = function<T>(obj: {[key: string]: T}): Array<T> {
  * @returns keys difference
  * @private
  */
-exports.keysDifference = function<S, T>(obj: {[key: string]: S}, other: {[key: string]: T}): Array<string> {
+export function keysDifference<S, T>(obj: {[key: string]: S}, other: {[key: string]: T}): Array<string> {
     const difference = [];
     for (const i in obj) {
         if (!(i in other)) {
@@ -134,7 +140,7 @@ exports.keysDifference = function<S, T>(obj: {[key: string]: S}, other: {[key: s
         }
     }
     return difference;
-};
+}
 
 /**
  * Given a destination object and optionally many source objects,
@@ -146,14 +152,14 @@ exports.keysDifference = function<S, T>(obj: {[key: string]: S}, other: {[key: s
  * @param sources sources from which properties are pulled
  * @private
  */
-exports.extend = function (dest: Object, ...sources: Array<?Object>): Object {
+export function extend(dest: Object, ...sources: Array<?Object>): Object {
     for (const src of sources) {
         for (const k in src) {
             dest[k] = src[k];
         }
     }
     return dest;
-};
+}
 
 /**
  * Given an object and a number of properties as strings, return version
@@ -169,7 +175,7 @@ exports.extend = function (dest: Object, ...sources: Array<?Object>): Object {
  * // justName = { name: 'Charlie' }
  * @private
  */
-exports.pick = function (src: Object, properties: Array<string>): Object {
+export function pick(src: Object, properties: Array<string>): Object {
     const result = {};
     for (let i = 0; i < properties.length; i++) {
         const k = properties[i];
@@ -178,7 +184,7 @@ exports.pick = function (src: Object, properties: Array<string>): Object {
         }
     }
     return result;
-};
+}
 
 let id = 1;
 
@@ -189,9 +195,49 @@ let id = 1;
  * @returns unique numeric id.
  * @private
  */
-exports.uniqueId = function (): number {
+export function uniqueId(): number {
     return id++;
-};
+}
+
+/**
+ * Return a random UUID (v4). Taken from: https://gist.github.com/jed/982883
+ * @private
+ */
+export function uuid(): string {
+    function b(a) {
+        return a ? (a ^ Math.random() * 16 >> a / 4).toString(16) :
+        //$FlowFixMe: Flow doesn't like the implied array literal conversion here
+            ([1e7] + -[1e3] + -4e3 + -8e3 + -1e11).replace(/[018]/g, b);
+    }
+    return b();
+}
+
+/**
+ * Return whether a given value is a power of two
+ * @private
+ */
+export function isPowerOfTwo(value: number): boolean {
+    return (Math.log(value) / Math.LN2) % 1 === 0;
+}
+
+/**
+ * Return the next power of two, or the input value if already a power of two
+ * @private
+ */
+export function nextPowerOfTwo(value: number): number {
+    if (value <= 1) return 1;
+    return Math.pow(2, Math.ceil(Math.log(value) / Math.LN2));
+}
+
+/**
+ * Validate a string to match UUID(v4) of the
+ * form: xxxxxxxx-xxxx-4xxx-[89ab]xxx-xxxxxxxxxxxx
+ * @param str string to validate.
+ * @private
+ */
+export function validateUuid(str: ?string): boolean {
+    return str ? /^[0-9a-f]{8}-[0-9a-f]{4}-[4][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(str) : false;
+}
 
 /**
  * Given an array of member function names as strings, replace all of them
@@ -214,48 +260,21 @@ exports.uniqueId = function (): number {
  * setTimeout(myClass.ontimer, 100);
  * @private
  */
-exports.bindAll = function(fns: Array<string>, context: Object): void {
+export function bindAll(fns: Array<string>, context: Object): void {
     fns.forEach((fn) => {
         if (!context[fn]) { return; }
         context[fn] = context[fn].bind(context);
     });
-};
-
-/**
- * Given a list of coordinates, get their center as a coordinate.
- *
- * @returns centerpoint
- * @private
- */
-exports.getCoordinatesCenter = function(coords: Array<Coordinate>): Coordinate {
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-
-    for (let i = 0; i < coords.length; i++) {
-        minX = Math.min(minX, coords[i].column);
-        minY = Math.min(minY, coords[i].row);
-        maxX = Math.max(maxX, coords[i].column);
-        maxY = Math.max(maxY, coords[i].row);
-    }
-
-    const dx = maxX - minX;
-    const dy = maxY - minY;
-    const dMax = Math.max(dx, dy);
-    const zoom = Math.max(0, Math.floor(-Math.log(dMax) / Math.LN2));
-    return new Coordinate((minX + maxX) / 2, (minY + maxY) / 2, 0)
-        .zoomTo(zoom);
-};
+}
 
 /**
  * Determine if a string ends with a particular substring
  *
  * @private
  */
-exports.endsWith = function(string: string, suffix: string): boolean {
+export function endsWith(string: string, suffix: string): boolean {
     return string.indexOf(suffix, string.length - suffix.length) !== -1;
-};
+}
 
 /**
  * Create an object by mapping all the values of an existing object while
@@ -263,20 +282,20 @@ exports.endsWith = function(string: string, suffix: string): boolean {
  *
  * @private
  */
-exports.mapObject = function(input: Object, iterator: Function, context?: Object): Object {
+export function mapObject(input: Object, iterator: Function, context?: Object): Object {
     const output = {};
     for (const key in input) {
         output[key] = iterator.call(context || this, input[key], key, input);
     }
     return output;
-};
+}
 
 /**
  * Create an object by filtering out values of an existing object.
  *
  * @private
  */
-exports.filterObject = function(input: Object, iterator: Function, context?: Object): Object {
+export function filterObject(input: Object, iterator: Function, context?: Object): Object {
     const output = {};
     for (const key in input) {
         if (iterator.call(context || this, input[key], key, input)) {
@@ -284,59 +303,37 @@ exports.filterObject = function(input: Object, iterator: Function, context?: Obj
         }
     }
     return output;
-};
+}
 
-/**
- * Deeply compares two object literals.
- *
- * @private
- */
-exports.deepEqual = function(a: ?mixed, b: ?mixed): boolean {
-    if (Array.isArray(a)) {
-        if (!Array.isArray(b) || a.length !== b.length) return false;
-        for (let i = 0; i < a.length; i++) {
-            if (!exports.deepEqual(a[i], b[i])) return false;
-        }
-        return true;
-    }
-    if (typeof a === 'object' && a !== null && b !== null) {
-        if (!(typeof b === 'object')) return false;
-        const keys = Object.keys(a);
-        if (keys.length !== Object.keys(b).length) return false;
-        for (const key in a) {
-            if (!exports.deepEqual(a[key], b[key])) return false;
-        }
-        return true;
-    }
-    return a === b;
-};
+import deepEqual from '../style-spec/util/deep_equal';
+export {deepEqual};
 
 /**
  * Deeply clones two objects.
  *
  * @private
  */
-exports.clone = function<T>(input: T): T {
+export function clone<T>(input: T): T {
     if (Array.isArray(input)) {
-        return input.map(exports.clone);
+        return input.map(clone);
     } else if (typeof input === 'object' && input) {
-        return ((exports.mapObject(input, exports.clone): any): T);
+        return ((mapObject(input, clone): any): T);
     } else {
         return input;
     }
-};
+}
 
 /**
  * Check if two arrays have at least one common element.
  *
  * @private
  */
-exports.arraysIntersect = function<T>(a: Array<T>, b: Array<T>): boolean {
+export function arraysIntersect<T>(a: Array<T>, b: Array<T>): boolean {
     for (let l = 0; l < a.length; l++) {
         if (b.indexOf(a[l]) >= 0) return true;
     }
     return false;
-};
+}
 
 /**
  * Print a warning message to the console and ensure duplicate warning messages
@@ -345,32 +342,35 @@ exports.arraysIntersect = function<T>(a: Array<T>, b: Array<T>): boolean {
  * @private
  */
 const warnOnceHistory: {[key: string]: boolean} = {};
-exports.warnOnce = function(message: string): void {
+
+export function warnOnce(message: string): void {
     if (!warnOnceHistory[message]) {
         // console isn't defined in some WebWorkers, see #2558
         if (typeof console !== "undefined") console.warn(message);
         warnOnceHistory[message] = true;
     }
-};
+}
 
 /**
  * Indicates if the provided Points are in a counter clockwise (true) or clockwise (false) order
  *
+ * @private
  * @returns true for a counter clockwise set of points
  */
 // http://bryceboe.com/2006/10/23/line-segment-intersection-algorithm/
-exports.isCounterClockwise = function(a: Point, b: Point, c: Point): boolean {
+export function isCounterClockwise(a: Point, b: Point, c: Point): boolean {
     return (c.y - a.y) * (b.x - a.x) > (b.y - a.y) * (c.x - a.x);
-};
+}
 
 /**
  * Returns the signed area for the polygon ring.  Postive areas are exterior rings and
  * have a clockwise winding.  Negative areas are interior rings and have a counter clockwise
  * ordering.
  *
+ * @private
  * @param ring Exterior or interior ring
  */
-exports.calculateSignedArea = function(ring: Array<Point>): number {
+export function calculateSignedArea(ring: Array<Point>): number {
     let sum = 0;
     for (let i = 0, len = ring.length, j = len - 1, p1, p2; i < len; j = i++) {
         p1 = ring[i];
@@ -378,15 +378,16 @@ exports.calculateSignedArea = function(ring: Array<Point>): number {
         sum += (p2.x - p1.x) * (p1.y + p2.y);
     }
     return sum;
-};
+}
 
 /**
  * Detects closed polygons, first + last point are equal
  *
+ * @private
  * @param points array of points
  * @return true if the points are a closed polygon
  */
-exports.isClosedPolygon = function(points: Array<Point>): boolean {
+export function isClosedPolygon(points: Array<Point>): boolean {
     // If it is 2 points that are the same then it is a point
     // If it is 3 points with start and end the same then it is a line
     if (points.length < 4)
@@ -401,20 +402,18 @@ exports.isClosedPolygon = function(points: Array<Point>): boolean {
     }
 
     // polygon simplification can produce polygons with zero area and more than 3 points
-    return (Math.abs(exports.calculateSignedArea(points)) > 0.01);
-};
+    return Math.abs(calculateSignedArea(points)) > 0.01;
+}
 
 /**
  * Converts spherical coordinates to cartesian coordinates.
  *
+ * @private
  * @param spherical Spherical coordinates, in [radial, azimuthal, polar]
  * @return cartesian coordinates in [x, y, z]
  */
 
-exports.sphericalToCartesian = function(spherical: Array<number>): Array<number> {
-    const r = spherical[0];
-    let azimuthal = spherical[1],
-        polar = spherical[2];
+export function sphericalToCartesian([r, azimuthal, polar]: [number, number, number]): {x: number, y: number, z: number} {
     // We abstract "north"/"up" (compass-wise) to be 0° when really this is 90° (π/2):
     // correct for that here
     azimuthal += 90;
@@ -423,22 +422,34 @@ exports.sphericalToCartesian = function(spherical: Array<number>): Array<number>
     azimuthal *= Math.PI / 180;
     polar *= Math.PI / 180;
 
-    // spherical to cartesian (x, y, z)
-    return [
-        r * Math.cos(azimuthal) * Math.sin(polar),
-        r * Math.sin(azimuthal) * Math.sin(polar),
-        r * Math.cos(polar)
-    ];
-};
+    return {
+        x: r * Math.cos(azimuthal) * Math.sin(polar),
+        y: r * Math.sin(azimuthal) * Math.sin(polar),
+        z: r * Math.cos(polar)
+    };
+}
+
+/* global self, WorkerGlobalScope */
+/**
+ *  Retuns true if the when run in the web-worker context.
+ *
+ * @private
+ * @returns {boolean}
+ */
+export function isWorker(): boolean {
+    return typeof WorkerGlobalScope !== 'undefined' && typeof self !== 'undefined' &&
+           self instanceof WorkerGlobalScope;
+}
 
 /**
  * Parses data from 'Cache-Control' headers.
  *
+ * @private
  * @param cacheControl Value of 'Cache-Control' header
  * @return object containing parsed header info.
  */
 
-exports.parseCacheControl = function(cacheControl: string): Object {
+export function parseCacheControl(cacheControl: string): Object {
     // Taken from [Wreck](https://github.com/hapijs/wreck)
     const re = /(?:^|(?:\s*\,\s*))([^\x00-\x20\(\)<>@\,;\:\\"\/\[\]\?\=\{\}\x7F]+)(?:\=(?:([^\x00-\x20\(\)<>@\,;\:\\"\/\[\]\?\=\{\}\x7F]+)|(?:\"((?:[^"\\]|\\.)*)\")))?/g;
 
@@ -456,4 +467,58 @@ exports.parseCacheControl = function(cacheControl: string): Object {
     }
 
     return header;
-};
+}
+
+let _isSafari = null;
+
+/**
+ * Returns true when run in WebKit derived browsers.
+ * This is used as a workaround for a memory leak in Safari caused by using Transferable objects to
+ * transfer data between WebWorkers and the main thread.
+ * https://github.com/mapbox/mapbox-gl-js/issues/8771
+ *
+ * This should be removed once the underlying Safari issue is fixed.
+ *
+ * @private
+ * @param scope {WindowOrWorkerGlobalScope} Since this function is used both on the main thread and WebWorker context,
+ *      let the calling scope pass in the global scope object.
+ * @returns {boolean}
+ */
+export function isSafari(scope: any): boolean {
+    if (_isSafari == null) {
+        const userAgent = scope.navigator ? scope.navigator.userAgent : null;
+        _isSafari = !!scope.safari ||
+        !!(userAgent && (/\b(iPad|iPhone|iPod)\b/.test(userAgent) || (!!userAgent.match('Safari') && !userAgent.match('Chrome'))));
+    }
+    return _isSafari;
+}
+
+export function storageAvailable(type: string): boolean {
+    try {
+        const storage = window[type];
+        storage.setItem('_mapbox_test_', 1);
+        storage.removeItem('_mapbox_test_');
+        return true;
+    } catch (e) {
+        return false;
+    }
+}
+
+// The following methods are from https://developer.mozilla.org/en-US/docs/Web/API/WindowBase64/Base64_encoding_and_decoding#The_Unicode_Problem
+//Unicode compliant base64 encoder for strings
+export function b64EncodeUnicode(str: string) {
+    return window.btoa(
+        encodeURIComponent(str).replace(/%([0-9A-F]{2})/g,
+            (match, p1) => {
+                return String.fromCharCode(Number('0x' + p1)); //eslint-disable-line
+            }
+        )
+    );
+}
+
+// Unicode compliant decoder for base64-encoded strings
+export function b64DecodeUnicode(str: string) {
+    return decodeURIComponent(window.atob(str).split('').map((c) => {
+        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2); //eslint-disable-line
+    }).join(''));
+}

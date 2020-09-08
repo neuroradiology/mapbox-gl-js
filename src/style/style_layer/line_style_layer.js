@@ -1,16 +1,81 @@
 // @flow
 
-const Point = require('@mapbox/point-geometry');
+import Point from '@mapbox/point-geometry';
 
-const StyleLayer = require('../style_layer');
-const LineBucket = require('../../data/bucket/line_bucket');
-const {multiPolygonIntersectsBufferedMultiLine} = require('../../util/intersection_tests');
-const {getMaximumPaintValue, translateDistance, translate} = require('../query_utils');
+import StyleLayer from '../style_layer';
+import LineBucket from '../../data/bucket/line_bucket';
+import {polygonIntersectsBufferedMultiLine} from '../../util/intersection_tests';
+import {getMaximumPaintValue, translateDistance, translate} from '../query_utils';
+import properties from './line_style_layer_properties';
+import {extend, MAX_SAFE_INTEGER} from '../../util/util';
+import EvaluationParameters from '../evaluation_parameters';
+import {Transitionable, Transitioning, Layout, PossiblyEvaluated, DataDrivenProperty} from '../properties';
 
+import Step from '../../style-spec/expression/definitions/step';
+import type {FeatureState, ZoomConstantExpression} from '../../style-spec/expression';
 import type {Bucket, BucketParameters} from '../../data/bucket';
+import type {LayoutProps, PaintProps} from './line_style_layer_properties';
+import type Transform from '../../geo/transform';
+import type {LayerSpecification} from '../../style-spec/types';
+
+class LineFloorwidthProperty extends DataDrivenProperty<number> {
+    useIntegerZoom: true;
+
+    possiblyEvaluate(value, parameters) {
+        parameters = new EvaluationParameters(Math.floor(parameters.zoom), {
+            now: parameters.now,
+            fadeDuration: parameters.fadeDuration,
+            zoomHistory: parameters.zoomHistory,
+            transition: parameters.transition
+        });
+        return super.possiblyEvaluate(value, parameters);
+    }
+
+    evaluate(value, globals, feature, featureState) {
+        globals = extend({}, globals, {zoom: Math.floor(globals.zoom)});
+        return super.evaluate(value, globals, feature, featureState);
+    }
+}
+
+const lineFloorwidthProperty = new LineFloorwidthProperty(properties.paint.properties['line-width'].specification);
+lineFloorwidthProperty.useIntegerZoom = true;
 
 class LineStyleLayer extends StyleLayer {
-    createBucket(parameters: BucketParameters) {
+    _unevaluatedLayout: Layout<LayoutProps>;
+    layout: PossiblyEvaluated<LayoutProps>;
+
+    gradientVersion: number;
+    stepInterpolant: boolean;
+
+    _transitionablePaint: Transitionable<PaintProps>;
+    _transitioningPaint: Transitioning<PaintProps>;
+    paint: PossiblyEvaluated<PaintProps>;
+
+    constructor(layer: LayerSpecification) {
+        super(layer, properties);
+        this.gradientVersion = 0;
+    }
+
+    _handleSpecialPaintPropertyUpdate(name: string) {
+        if (name === 'line-gradient') {
+            const expression: ZoomConstantExpression<'source'> = ((this._transitionablePaint._values['line-gradient'].value.expression): any);
+            this.stepInterpolant = expression._styleExpression.expression instanceof Step;
+            this.gradientVersion = (this.gradientVersion + 1) % MAX_SAFE_INTEGER;
+        }
+    }
+
+    gradientExpression() {
+        return this._transitionablePaint._values['line-gradient'].value.expression;
+    }
+
+    recalculate(parameters: EvaluationParameters, availableImages: Array<string>) {
+        super.recalculate(parameters, availableImages);
+
+        (this.paint._values: any)['line-floorwidth'] =
+            lineFloorwidthProperty.possiblyEvaluate(this._transitioningPaint._values['line-width'].value, parameters);
+    }
+
+    createBucket(parameters: BucketParameters<*>) {
         return new LineBucket(parameters);
     }
 
@@ -20,31 +85,37 @@ class LineStyleLayer extends StyleLayer {
             getMaximumPaintValue('line-width', this, lineBucket),
             getMaximumPaintValue('line-gap-width', this, lineBucket));
         const offset = getMaximumPaintValue('line-offset', this, lineBucket);
-        return width / 2 + Math.abs(offset) + translateDistance(this.paint['line-translate']);
+        return width / 2 + Math.abs(offset) + translateDistance(this.paint.get('line-translate'));
     }
 
-    queryIntersectsFeature(queryGeometry: Array<Array<Point>>,
+    queryIntersectsFeature(queryGeometry: Array<Point>,
                            feature: VectorTileFeature,
+                           featureState: FeatureState,
                            geometry: Array<Array<Point>>,
                            zoom: number,
-                           bearing: number,
+                           transform: Transform,
                            pixelsToTileUnits: number): boolean {
         const translatedPolygon = translate(queryGeometry,
-            this.getPaintValue('line-translate', {zoom}, feature.properties),
-            this.getPaintValue('line-translate-anchor', {zoom}, feature.properties),
-            bearing, pixelsToTileUnits);
+            this.paint.get('line-translate'),
+            this.paint.get('line-translate-anchor'),
+            transform.angle, pixelsToTileUnits);
         const halfWidth = pixelsToTileUnits / 2 * getLineWidth(
-            this.getPaintValue('line-width', {zoom}, feature.properties),
-            this.getPaintValue('line-gap-width', {zoom}, feature.properties));
-        const lineOffset = this.getPaintValue('line-offset', {zoom}, feature.properties);
+            this.paint.get('line-width').evaluate(feature, featureState),
+            this.paint.get('line-gap-width').evaluate(feature, featureState));
+        const lineOffset = this.paint.get('line-offset').evaluate(feature, featureState);
         if (lineOffset) {
             geometry = offsetLine(geometry, lineOffset * pixelsToTileUnits);
         }
-        return multiPolygonIntersectsBufferedMultiLine(translatedPolygon, geometry, halfWidth);
+
+        return polygonIntersectsBufferedMultiLine(translatedPolygon, geometry, halfWidth);
+    }
+
+    isTileClipped() {
+        return true;
     }
 }
 
-module.exports = LineStyleLayer;
+export default LineStyleLayer;
 
 function getLineWidth(lineWidth, lineGapWidth) {
     if (lineGapWidth > 0) {

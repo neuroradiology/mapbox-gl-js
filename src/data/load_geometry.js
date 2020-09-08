@@ -1,8 +1,8 @@
 // @flow
 
-const util = require('../util/util');
-const EXTENT = require('./extent');
-const assert = require('assert');
+import {warnOnce, clamp} from '../util/util';
+
+import EXTENT from './extent';
 
 import type Point from '@mapbox/point-geometry';
 
@@ -10,31 +10,17 @@ import type Point from '@mapbox/point-geometry';
 // While visible coordinates are within [0, EXTENT], tiles may theoretically
 // contain cordinates within [-Infinity, Infinity]. Our range is limited by the
 // number of bits used to represent the coordinate.
-function createBounds(bits) {
-    return {
-        min: -1 * Math.pow(2, bits - 1),
-        max: Math.pow(2, bits - 1) - 1
-    };
-}
-
-const boundsLookup = {
-    '15': createBounds(15),
-    '16': createBounds(16)
-};
+const BITS = 15;
+const MAX = Math.pow(2, BITS - 1) - 1;
+const MIN = -MAX - 1;
 
 /**
  * Loads a geometry from a VectorTileFeature and scales it to the common extent
  * used internally.
  * @param {VectorTileFeature} feature
- * @param {number} [bits=16] The number of signed integer bits available to store
- *   each coordinate. A warning will be issued if any coordinate will not fits
- *   in the specified number of bits.
  * @private
  */
-module.exports = function loadGeometry(feature: VectorTileFeature, bits?: number): Array<Array<Point>> {
-    const bounds = boundsLookup[bits || 16];
-    assert(bounds);
-
+export default function loadGeometry(feature: VectorTileFeature): Array<Array<Point>> {
     const scale = EXTENT / feature.extent;
     const geometry = feature.loadGeometry();
     for (let r = 0; r < geometry.length; r++) {
@@ -43,13 +29,18 @@ module.exports = function loadGeometry(feature: VectorTileFeature, bits?: number
             const point = ring[p];
             // round here because mapbox-gl-native uses integers to represent
             // points and we need to do the same to avoid renering differences.
-            point.x = Math.round(point.x * scale);
-            point.y = Math.round(point.y * scale);
+            const x = Math.round(point.x * scale);
+            const y = Math.round(point.y * scale);
 
-            if (point.x < bounds.min || point.x > bounds.max || point.y < bounds.min || point.y > bounds.max) {
-                util.warnOnce('Geometry exceeds allowed extent, reduce your vector tile buffer size');
+            point.x = clamp(x, MIN, MAX);
+            point.y = clamp(y, MIN, MAX);
+
+            if (x < point.x || x > point.x + 1 || y < point.y || y > point.y + 1) {
+                // warn when exceeding allowed extent except for the 1-px-off case
+                // https://github.com/mapbox/mapbox-gl-js/issues/8992
+                warnOnce('Geometry exceeds allowed extent, reduce your vector tile buffer size');
             }
         }
     }
     return geometry;
-};
+}

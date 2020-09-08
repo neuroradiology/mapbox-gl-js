@@ -1,9 +1,9 @@
-// @flow
+// @flow strict
 
-const assert = require('assert');
+import assert from 'assert';
 
 class DictionaryCoder {
-    _stringToNumber: { [string]: number };
+    _stringToNumber: {[_: string]: number };
     _numberToString: Array<string>;
 
     constructor(strings: Array<string>) {
@@ -27,4 +27,4 @@ class DictionaryCoder {
     }
 }
 
-module.exports = DictionaryCoder;
+export default DictionaryCoder;

@@ -2,7 +2,7 @@
   "version": 8,
   "metadata": {
     "test": {
-      "diff": 0.0003,
+      "allowed": 0.0003,
       "operations": [
         ["setPaintProperty", "land", "fill-pattern", null],
         ["wait"]
@@ -17,6 +17,9 @@
         "local://tiles/{z}-{x}-{y}.mvt"
       ]
     }
+  },
+  "transition": {
+    "duration": 0
   },
   "sprite": "local://sprites/emerald",
   "layers": [

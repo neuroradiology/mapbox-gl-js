@@ -1,18 +1,9 @@
-'use strict';
-
-const test = require('mapbox-gl-js-test').test;
-const Map = require('../../../src/ui/map');
-const window = require('../../../src/util/window');
-const simulate = require('mapbox-gl-js-test/simulate_interaction');
-
-function createMap() {
-    return new Map({
-        container: window.document.createElement('div')
-    });
-}
+import {test} from '../../util/test';
+import {createMap} from '../../util';
+import simulate, {window} from '../../util/simulate_interaction';
 
 test('Map#on adds a non-delegated event listener', (t) => {
-    const map = createMap();
+    const map = createMap(t);
     const spy = t.spy(function (e) {
         t.equal(this, map);
         t.equal(e.type, 'click');
@@ -26,7 +17,7 @@ test('Map#on adds a non-delegated event listener', (t) => {
 });
 
 test('Map#off removes a non-delegated event listener', (t) => {
-    const map = createMap();
+    const map = createMap(t);
     const spy = t.spy();
 
     map.on('click', spy);
@@ -38,7 +29,7 @@ test('Map#off removes a non-delegated event listener', (t) => {
 });
 
 test('Map#on adds a listener for an event on a given layer', (t) => {
-    const map = createMap();
+    const map = createMap(t);
     const features = [{}];
 
     t.stub(map, 'getLayer').returns({});
@@ -61,7 +52,7 @@ test('Map#on adds a listener for an event on a given layer', (t) => {
 });
 
 test('Map#on adds a listener not triggered for events not matching any features', (t) => {
-    const map = createMap();
+    const map = createMap(t);
     const features = [];
 
     t.stub(map, 'getLayer').returns({});
@@ -80,7 +71,7 @@ test('Map#on adds a listener not triggered for events not matching any features'
 });
 
 test(`Map#on adds a listener not triggered when the specified layer does not exiist`, (t) => {
-    const map = createMap();
+    const map = createMap(t);
 
     t.stub(map, 'getLayer').returns(null);
 
@@ -94,7 +85,7 @@ test(`Map#on adds a listener not triggered when the specified layer does not exi
 });
 
 test('Map#on distinguishes distinct event types', (t) => {
-    const map = createMap();
+    const map = createMap(t);
 
     t.stub(map, 'getLayer').returns({});
     t.stub(map, 'queryRenderedFeatures').returns([{}]);
@@ -117,7 +108,7 @@ test('Map#on distinguishes distinct event types', (t) => {
 });
 
 test('Map#on distinguishes distinct layers', (t) => {
-    const map = createMap();
+    const map = createMap(t);
     const featuresA = [{}];
     const featuresB = [{}];
 
@@ -144,7 +135,7 @@ test('Map#on distinguishes distinct layers', (t) => {
 });
 
 test('Map#on distinguishes distinct listeners', (t) => {
-    const map = createMap();
+    const map = createMap(t);
 
     t.stub(map, 'getLayer').returns({});
     t.stub(map, 'queryRenderedFeatures').returns([{}]);
@@ -162,7 +153,7 @@ test('Map#on distinguishes distinct listeners', (t) => {
 });
 
 test('Map#off removes a delegated event listener', (t) => {
-    const map = createMap();
+    const map = createMap(t);
 
     t.stub(map, 'getLayer').returns({});
     t.stub(map, 'queryRenderedFeatures').returns([{}]);
@@ -178,7 +169,7 @@ test('Map#off removes a delegated event listener', (t) => {
 });
 
 test('Map#off distinguishes distinct event types', (t) => {
-    const map = createMap();
+    const map = createMap(t);
 
     t.stub(map, 'getLayer').returns({});
     t.stub(map, 'queryRenderedFeatures').returns([{}]);
@@ -197,7 +188,7 @@ test('Map#off distinguishes distinct event types', (t) => {
 });
 
 test('Map#off distinguishes distinct layers', (t) => {
-    const map = createMap();
+    const map = createMap(t);
     const featuresA = [{}];
 
     t.stub(map, 'getLayer').returns({});
@@ -220,7 +211,7 @@ test('Map#off distinguishes distinct layers', (t) => {
 });
 
 test('Map#off distinguishes distinct listeners', (t) => {
-    const map = createMap();
+    const map = createMap(t);
 
     t.stub(map, 'getLayer').returns({});
     t.stub(map, 'queryRenderedFeatures').returns([{}]);
@@ -239,8 +230,8 @@ test('Map#off distinguishes distinct listeners', (t) => {
 });
 
 ['mouseenter', 'mouseover'].forEach((event) => {
-    test(`Map#on ${event} does not fire if the specified layer does not exiist`, (t) => {
-        const map = createMap();
+    test(`Map#on ${event} does not fire if the specified layer does not exist`, (t) => {
+        const map = createMap(t);
 
         t.stub(map, 'getLayer').returns(null);
 
@@ -255,7 +246,7 @@ test('Map#off distinguishes distinct listeners', (t) => {
     });
 
     test(`Map#on ${event} fires when entering the specified layer`, (t) => {
-        const map = createMap();
+        const map = createMap(t);
         const features = [{}];
 
         t.stub(map, 'getLayer').returns({});
@@ -267,6 +258,7 @@ test('Map#off distinguishes distinct listeners', (t) => {
         const spy = t.spy(function (e) {
             t.equal(this, map);
             t.equal(e.type, event);
+            t.equal(e.target, map);
             t.equal(e.features, features);
         });
 
@@ -278,7 +270,7 @@ test('Map#off distinguishes distinct listeners', (t) => {
     });
 
     test(`Map#on ${event} does not fire on mousemove within the specified layer`, (t) => {
-        const map = createMap();
+        const map = createMap(t);
 
         t.stub(map, 'getLayer').returns({});
         t.stub(map, 'queryRenderedFeatures').returns([{}]);
@@ -294,7 +286,7 @@ test('Map#off distinguishes distinct listeners', (t) => {
     });
 
     test(`Map#on ${event} fires when reentering the specified layer`, (t) => {
-        const map = createMap();
+        const map = createMap(t);
 
         t.stub(map, 'getLayer').returns({});
         t.stub(map, 'queryRenderedFeatures')
@@ -314,7 +306,7 @@ test('Map#off distinguishes distinct listeners', (t) => {
     });
 
     test(`Map#on ${event} fires when reentering the specified layer after leaving the canvas`, (t) => {
-        const map = createMap();
+        const map = createMap(t);
 
         t.stub(map, 'getLayer').returns({});
         t.stub(map, 'queryRenderedFeatures').returns([{}]);
@@ -331,7 +323,7 @@ test('Map#off distinguishes distinct listeners', (t) => {
     });
 
     test(`Map#on ${event} distinguishes distinct layers`, (t) => {
-        const map = createMap();
+        const map = createMap(t);
         const featuresA = [{}];
         const featuresB = [{}];
 
@@ -360,7 +352,7 @@ test('Map#off distinguishes distinct listeners', (t) => {
     });
 
     test(`Map#on ${event} distinguishes distinct listeners`, (t) => {
-        const map = createMap();
+        const map = createMap(t);
 
         t.stub(map, 'getLayer').returns({});
         t.stub(map, 'queryRenderedFeatures').returns([{}]);
@@ -378,7 +370,7 @@ test('Map#off distinguishes distinct listeners', (t) => {
     });
 
     test(`Map#off ${event} removes a delegated event listener`, (t) => {
-        const map = createMap();
+        const map = createMap(t);
 
         t.stub(map, 'getLayer').returns({});
         t.stub(map, 'queryRenderedFeatures').returns([{}]);
@@ -394,7 +386,7 @@ test('Map#off distinguishes distinct listeners', (t) => {
     });
 
     test(`Map#off ${event} distinguishes distinct layers`, (t) => {
-        const map = createMap();
+        const map = createMap(t);
         const featuresA = [{}];
 
         t.stub(map, 'getLayer').returns({});
@@ -417,7 +409,7 @@ test('Map#off distinguishes distinct listeners', (t) => {
     });
 
     test(`Map#off ${event} distinguishes distinct listeners`, (t) => {
-        const map = createMap();
+        const map = createMap(t);
 
         t.stub(map, 'getLayer').returns({});
         t.stub(map, 'queryRenderedFeatures').returns([{}]);
@@ -438,7 +430,7 @@ test('Map#off distinguishes distinct listeners', (t) => {
 
 ['mouseleave', 'mouseout'].forEach((event) => {
     test(`Map#on ${event} does not fire if the specified layer does not exiist`, (t) => {
-        const map = createMap();
+        const map = createMap(t);
 
         t.stub(map, 'getLayer').returns(null);
 
@@ -453,7 +445,7 @@ test('Map#off distinguishes distinct listeners', (t) => {
     });
 
     test(`Map#on ${event} does not fire on mousemove when entering or within the specified layer`, (t) => {
-        const map = createMap();
+        const map = createMap(t);
 
         t.stub(map, 'getLayer').returns({});
         t.stub(map, 'queryRenderedFeatures').returns([{}]);
@@ -469,7 +461,7 @@ test('Map#off distinguishes distinct listeners', (t) => {
     });
 
     test(`Map#on ${event} fires when exiting the specified layer`, (t) => {
-        const map = createMap();
+        const map = createMap(t);
 
         t.stub(map, 'getLayer').returns({});
         t.stub(map, 'queryRenderedFeatures')
@@ -491,7 +483,7 @@ test('Map#off distinguishes distinct listeners', (t) => {
     });
 
     test(`Map#on ${event} fires when exiting the canvas`, (t) => {
-        const map = createMap();
+        const map = createMap(t);
 
         t.stub(map, 'getLayer').returns({});
         t.stub(map, 'queryRenderedFeatures').returns([{}]);
@@ -511,7 +503,7 @@ test('Map#off distinguishes distinct listeners', (t) => {
     });
 
     test(`Map#off ${event} removes a delegated event listener`, (t) => {
-        const map = createMap();
+        const map = createMap(t);
 
         t.stub(map, 'getLayer').returns({});
         t.stub(map, 'queryRenderedFeatures')
@@ -529,4 +521,112 @@ test('Map#off distinguishes distinct listeners', (t) => {
         t.ok(spy.notCalled);
         t.end();
     });
+});
+
+test(`Map#on mousedown can have default behavior prevented and still fire subsequent click event`, (t) => {
+    const map = createMap(t);
+
+    map.on('mousedown', e => e.preventDefault());
+
+    const click = t.spy();
+    map.on('click', click);
+
+    simulate.click(map.getCanvas());
+    t.ok(click.callCount, 1);
+
+    map.remove();
+    t.end();
+});
+
+test(`Map#on mousedown doesn't fire subsequent click event if mousepos changes`, (t) => {
+    const map = createMap(t);
+
+    map.on('mousedown', e => e.preventDefault());
+
+    const click = t.spy();
+    map.on('click', click);
+    const canvas = map.getCanvas();
+
+    simulate.drag(canvas, {}, {clientX: 100, clientY: 100});
+    t.ok(click.notCalled);
+
+    map.remove();
+    t.end();
+});
+
+test(`Map#on mousedown fires subsequent click event if mouse position changes less than click tolerance`, (t) => {
+    const map = createMap(t, {clickTolerance: 4});
+
+    map.on('mousedown', e => e.preventDefault());
+
+    const click = t.spy();
+    map.on('click', click);
+    const canvas = map.getCanvas();
+
+    simulate.drag(canvas, {clientX: 100, clientY: 100}, {clientX: 100, clientY: 103});
+    t.ok(click.called);
+
+    map.remove();
+    t.end();
+});
+
+test(`Map#on mousedown does not fire subsequent click event if mouse position changes more than click tolerance`, (t) => {
+    const map = createMap(t, {clickTolerance: 4});
+
+    map.on('mousedown', e => e.preventDefault());
+
+    const click = t.spy();
+    map.on('click', click);
+    const canvas = map.getCanvas();
+
+    simulate.drag(canvas, {clientX: 100, clientY: 100}, {clientX: 100, clientY: 104});
+    t.ok(click.notCalled);
+
+    map.remove();
+    t.end();
+});
+
+test(`Map#on click fires subsequent click event if there is no corresponding mousedown/mouseup event`, (t) => {
+    const map = createMap(t, {clickTolerance: 4});
+
+    const click = t.spy();
+    map.on('click', click);
+    const canvas = map.getCanvas();
+
+    const MouseEvent = window(canvas).MouseEvent;
+    const event = new MouseEvent('click', {bubbles: true, clientX: 100, clientY: 100});
+    canvas.dispatchEvent(event);
+    t.ok(click.called);
+
+    map.remove();
+    t.end();
+});
+
+test("Map#isMoving() returns false in mousedown/mouseup/click with no movement", (t) => {
+    const map = createMap(t, {interactive: true, clickTolerance: 4});
+    let mousedown, mouseup, click;
+    map.on('mousedown', () => { mousedown = map.isMoving(); });
+    map.on('mouseup', () => { mouseup = map.isMoving(); });
+    map.on('click', () => { click = map.isMoving(); });
+
+    const canvas = map.getCanvas();
+    const MouseEvent = window(canvas).MouseEvent;
+
+    canvas.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, clientX: 100, clientY: 100}));
+    t.equal(mousedown, false);
+    map._renderTaskQueue.run();
+    t.equal(mousedown, false);
+
+    canvas.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, clientX: 100, clientY: 100}));
+    t.equal(mouseup, false);
+    map._renderTaskQueue.run();
+    t.equal(mouseup, false);
+
+    canvas.dispatchEvent(new MouseEvent('click', {bubbles: true, clientX: 100, clientY: 100}));
+    t.equal(click, false);
+    map._renderTaskQueue.run();
+    t.equal(click, false);
+
+    map.remove();
+    t.end();
 });

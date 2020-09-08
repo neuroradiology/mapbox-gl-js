@@ -1,54 +1,43 @@
-'use strict';
-
-const test = require('mapbox-gl-js-test').test;
-const fs = require('fs');
-const path = require('path');
-const Protobuf = require('pbf');
-const VectorTile = require('@mapbox/vector-tile').VectorTile;
-const Point = require('@mapbox/point-geometry');
-const segment = require('../../../src/data/segment');
-const FillBucket = require('../../../src/data/bucket/fill_bucket');
-const StyleLayer = require('../../../src/style/style_layer');
+import {test} from '../../util/test';
+import fs from 'fs';
+import path from 'path';
+import Protobuf from 'pbf';
+import {VectorTile} from '@mapbox/vector-tile';
+import Point from '@mapbox/point-geometry';
+import segment from '../../../src/data/segment';
+import FillBucket from '../../../src/data/bucket/fill_bucket';
+import FillStyleLayer from '../../../src/style/style_layer/fill_style_layer';
 
 // Load a fill feature from fixture tile.
 const vt = new VectorTile(new Protobuf(fs.readFileSync(path.join(__dirname, '/../../fixtures/mbsv5-6-18-23.vector.pbf'))));
 const feature = vt.layers.water.feature(0);
 
-function createFeature(points) {
-    return {
-        properties: {
-            'foo': 1
-        },
-        loadGeometry: function() {
-            return points;
-        }
-    };
-}
-
 function createPolygon(numPoints) {
     const points = [];
     for (let i = 0; i < numPoints; i++) {
-        points.push(new Point(i / numPoints, i / numPoints));
+        points.push(new Point(2048 + 256 * Math.cos(i / numPoints * 2 * Math.PI, 2048 + 256 * Math.sin(i / numPoints * 2 * Math.PI))));
     }
     return points;
 }
 
 test('FillBucket', (t) => {
-    const layer = new StyleLayer({ id: 'test', type: 'fill', layout: {} });
-    const bucket = new FillBucket({ layers: [layer] });
+    const layer = new FillStyleLayer({id: 'test', type: 'fill', layout: {}});
+    layer.recalculate({zoom: 0, zoomHistory: {}});
 
-    bucket.addFeature(createFeature([[
+    const bucket = new FillBucket({layers: [layer]});
+
+    bucket.addFeature({}, [[
         new Point(0, 0),
         new Point(10, 10)
-    ]]));
+    ]]);
 
-    bucket.addFeature(createFeature([[
+    bucket.addFeature({}, [[
         new Point(0, 0),
         new Point(10, 10),
         new Point(10, 20)
-    ]]));
+    ]]);
 
-    bucket.addFeature(feature);
+    bucket.addFeature(feature, feature.loadGeometry());
 
     t.end();
 });
@@ -58,31 +47,27 @@ test('FillBucket segmentation', (t) => {
     // breaking across array groups without tests taking a _long_ time.
     t.stub(segment, 'MAX_VERTEX_ARRAY_LENGTH').value(256);
 
-    const layer = new StyleLayer({
+    const layer = new FillStyleLayer({
         id: 'test',
         type: 'fill',
         layout: {},
-        paint: { 'fill-color': {
-            stops: [[0, 'red'], [1, 'blue']],
-            property: 'foo'
-        } }
+        paint: {
+            'fill-color': ['to-color', ['get', 'foo'], '#000']
+        }
     });
+    layer.recalculate({zoom: 0, zoomHistory: {}});
 
-    // this, plus the style function, sets things up so that
-    // populatePaintArrays iterates through each vertex
-    layer.updatePaintTransition('fill-color', [], {});
-
-    const bucket = new FillBucket({ layers: [layer] });
+    const bucket = new FillBucket({layers: [layer]});
 
     // first add an initial, small feature to make sure the next one starts at
     // a non-zero offset
-    bucket.addFeature(createFeature([createPolygon(10)]));
+    bucket.addFeature({}, [createPolygon(10)]);
 
     // add a feature that will break across the group boundary
-    bucket.addFeature(createFeature([
+    bucket.addFeature({}, [
         createPolygon(128),
         createPolygon(128)
-    ]));
+    ]);
 
     // Each polygon must fit entirely within a segment, so we expect the
     // first segment to include the first feature and the first polygon

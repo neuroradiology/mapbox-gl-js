@@ -1,28 +1,25 @@
-'use strict';
-
-const test = require('mapbox-gl-js-test').test;
-const Tile = require('../../../src/source/tile');
-const GeoJSONWrapper = require('../../../src/source/geojson_wrapper');
-const TileCoord = require('../../../src/source/tile_coord');
-const fs = require('fs');
-const path = require('path');
-const vtpbf = require('vt-pbf');
-const FeatureIndex = require('../../../src/data/feature_index');
-const CollisionTile = require('../../../src/symbol/collision_tile');
-const CollisionBoxArray = require('../../../src/symbol/collision_box');
-const util = require('../../../src/util/util');
-const Evented = require('../../../src/util/evented');
+import {test} from '../../util/test';
+import {createSymbolBucket} from '../../util/create_symbol_layer';
+import Tile from '../../../src/source/tile';
+import GeoJSONWrapper from '../../../src/source/geojson_wrapper';
+import {OverscaledTileID} from '../../../src/source/tile_id';
+import fs from 'fs';
+import path from 'path';
+import vtpbf from 'vt-pbf';
+import FeatureIndex from '../../../src/data/feature_index';
+import {CollisionBoxArray} from '../../../src/data/array_types';
+import {extend} from '../../../src/util/util';
+import {serialize, deserialize} from '../../../src/util/web_worker_transfer';
 
 test('querySourceFeatures', (t) => {
     const features = [{
         type: 1,
         geometry: [0, 0],
-        tags: { oneway: true }
+        tags: {oneway: true}
     }];
 
-
     t.test('geojson tile', (t) => {
-        const tile = new Tile(new TileCoord(1, 1, 1));
+        const tile = new Tile(new OverscaledTileID(3, 0, 2, 1, 2));
         let result;
 
         result = [];
@@ -31,26 +28,30 @@ test('querySourceFeatures', (t) => {
 
         const geojsonWrapper = new GeoJSONWrapper(features);
         geojsonWrapper.name = '_geojsonTileLayer';
-        tile.rawTileData = vtpbf({ layers: { '_geojsonTileLayer': geojsonWrapper }});
+        tile.loadVectorData(
+            createVectorData({rawTileData: vtpbf({layers: {'_geojsonTileLayer': geojsonWrapper}})}),
+            createPainter()
+        );
 
         result = [];
         tile.querySourceFeatures(result);
         t.equal(result.length, 1);
+        t.deepEqual(result[0].geometry.coordinates[0], [-90, 0]);
         result = [];
         tile.querySourceFeatures(result, {});
         t.equal(result.length, 1);
         t.deepEqual(result[0].properties, features[0].tags);
         result = [];
-        tile.querySourceFeatures(result, { filter: ['==', 'oneway', true]});
+        tile.querySourceFeatures(result, {filter: ['==', 'oneway', true]});
         t.equal(result.length, 1);
         result = [];
-        tile.querySourceFeatures(result, { filter: ['!=', 'oneway', true]});
+        tile.querySourceFeatures(result, {filter: ['!=', 'oneway', true]});
         t.equal(result.length, 0);
         t.end();
     });
 
     t.test('empty geojson tile', (t) => {
-        const tile = new Tile(new TileCoord(1, 1, 1));
+        const tile = new Tile(new OverscaledTileID(1, 0, 1, 1, 1));
         let result;
 
         result = [];
@@ -59,7 +60,7 @@ test('querySourceFeatures', (t) => {
 
         const geojsonWrapper = new GeoJSONWrapper([]);
         geojsonWrapper.name = '_geojsonTileLayer';
-        tile.rawTileData = vtpbf({ layers: { '_geojsonTileLayer': geojsonWrapper }});
+        tile.rawTileData = vtpbf({layers: {'_geojsonTileLayer': geojsonWrapper}});
         result = [];
         t.doesNotThrow(() => { tile.querySourceFeatures(result); });
         t.equal(result.length, 0);
@@ -67,7 +68,7 @@ test('querySourceFeatures', (t) => {
     });
 
     t.test('vector tile', (t) => {
-        const tile = new Tile(new TileCoord(1, 1, 1));
+        const tile = new Tile(new OverscaledTileID(1, 0, 1, 1, 1));
         let result;
 
         result = [];
@@ -80,25 +81,25 @@ test('querySourceFeatures', (t) => {
         );
 
         result = [];
-        tile.querySourceFeatures(result, { 'sourceLayer': 'does-not-exist'});
+        tile.querySourceFeatures(result, {'sourceLayer': 'does-not-exist'});
         t.equal(result.length, 0);
 
         result = [];
-        tile.querySourceFeatures(result, { 'sourceLayer': 'road' });
+        tile.querySourceFeatures(result, {'sourceLayer': 'road'});
         t.equal(result.length, 3);
 
         result = [];
-        tile.querySourceFeatures(result, { 'sourceLayer': 'road', filter: ['==', 'class', 'main'] });
+        tile.querySourceFeatures(result, {'sourceLayer': 'road', filter: ['==', 'class', 'main']});
         t.equal(result.length, 1);
         result = [];
-        tile.querySourceFeatures(result, { 'sourceLayer': 'road', filter: ['!=', 'class', 'main'] });
+        tile.querySourceFeatures(result, {'sourceLayer': 'road', filter: ['!=', 'class', 'main']});
         t.equal(result.length, 2);
 
         t.end();
     });
 
     t.test('loadVectorData unloads existing data before overwriting it', (t) => {
-        const tile = new Tile(new TileCoord(1, 1, 1));
+        const tile = new Tile(new OverscaledTileID(1, 0, 1, 1, 1));
         tile.state = 'loaded';
         t.stub(tile, 'unloadVectorData');
         const painter = {};
@@ -110,7 +111,7 @@ test('querySourceFeatures', (t) => {
     });
 
     t.test('loadVectorData preserves the most recent rawTileData', (t) => {
-        const tile = new Tile(new TileCoord(1, 1, 1));
+        const tile = new Tile(new OverscaledTileID(1, 0, 1, 1, 1));
         tile.state = 'loaded';
 
         tile.loadVectorData(
@@ -123,7 +124,7 @@ test('querySourceFeatures', (t) => {
         );
 
         const features = [];
-        tile.querySourceFeatures(features, { 'sourceLayer': 'road' });
+        tile.querySourceFeatures(features, {'sourceLayer': 'road'});
         t.equal(features.length, 3);
 
         t.end();
@@ -132,74 +133,55 @@ test('querySourceFeatures', (t) => {
     t.end();
 });
 
-test('Tile#redoPlacement', (t) => {
+test('Tile#isLessThan', (t) => {
+    t.test('correctly sorts tiles', (t) => {
+        const tiles = [
+            new OverscaledTileID(9, 0, 9, 146, 195),
+            new OverscaledTileID(9, 0, 9, 147, 195),
+            new OverscaledTileID(9, 0, 9, 148, 195),
+            new OverscaledTileID(9, 0, 9, 149, 195),
+            new OverscaledTileID(9, 1, 9, 144, 196),
+            new OverscaledTileID(9, 0, 9, 145, 196),
+            new OverscaledTileID(9, 0, 9, 146, 196),
+            new OverscaledTileID(9, 1, 9, 147, 196),
+            new OverscaledTileID(9, 0, 9, 145, 194),
+            new OverscaledTileID(9, 0, 9, 149, 196),
+            new OverscaledTileID(10, 0, 10, 293, 391),
+            new OverscaledTileID(10, 0, 10, 291, 390),
+            new OverscaledTileID(10, 1, 10, 293, 390),
+            new OverscaledTileID(10, 0, 10, 294, 390),
+            new OverscaledTileID(10, 0, 10, 295, 390),
+            new OverscaledTileID(10, 0, 10, 291, 391),
+        ];
 
-    test('redoPlacement on an empty tile', (t) => {
-        const tile = new Tile(new TileCoord(1, 1, 1));
-        tile.loadVectorData(null, createPainter());
+        const sortedTiles = tiles.sort((a, b) => { return a.isLessThan(b) ? -1 : b.isLessThan(a) ? 1 : 0; });
 
-        t.doesNotThrow(() => tile.redoPlacement({type: 'vector'}));
-        t.notOk(tile.redoWhenDone);
+        t.deepEqual(sortedTiles, [
+            new OverscaledTileID(9, 0, 9, 145, 194),
+            new OverscaledTileID(9, 0, 9, 145, 196),
+            new OverscaledTileID(9, 0, 9, 146, 195),
+            new OverscaledTileID(9, 0, 9, 146, 196),
+            new OverscaledTileID(9, 0, 9, 147, 195),
+            new OverscaledTileID(9, 0, 9, 148, 195),
+            new OverscaledTileID(9, 0, 9, 149, 195),
+            new OverscaledTileID(9, 0, 9, 149, 196),
+            new OverscaledTileID(10, 0, 10, 291, 390),
+            new OverscaledTileID(10, 0, 10, 291, 391),
+            new OverscaledTileID(10, 0, 10, 293, 391),
+            new OverscaledTileID(10, 0, 10, 294, 390),
+            new OverscaledTileID(10, 0, 10, 295, 390),
+            new OverscaledTileID(9, 1, 9, 144, 196),
+            new OverscaledTileID(9, 1, 9, 147, 196),
+            new OverscaledTileID(10, 1, 10, 293, 390),
+        ]);
         t.end();
     });
-
-    test('redoPlacement on a loading tile', (t) => {
-        const tile = new Tile(new TileCoord(1, 1, 1));
-        t.doesNotThrow(() => tile.redoPlacement({type: 'vector'}));
-        t.ok(tile.redoWhenDone);
-        t.end();
-    });
-
-    test('redoPlacement on a reloading tile', (t) => {
-        const tile = new Tile(new TileCoord(1, 1, 1));
-        tile.loadVectorData(createVectorData(), createPainter());
-
-        const options = {
-            type: 'vector',
-            dispatcher: {
-                send: () => {}
-            },
-            map: {
-                transform: { cameraToCenterDistance: 1, cameraToTileDistance: () => { return 1; } }
-            }
-        };
-
-        tile.redoPlacement(options);
-        tile.redoPlacement(options);
-
-        t.ok(tile.redoWhenDone);
-        t.end();
-    });
-
-    test('reloaded tile fires a data event on completion', (t)=>{
-        const tile = new Tile(new TileCoord(1, 1, 1));
-        tile.loadVectorData(createVectorData(), createPainter());
-        t.stub(tile, 'reloadSymbolData').returns(null);
-        const source = util.extend(new Evented(), {
-            type: 'vector',
-            dispatcher: {
-                send: (name, data, cb) => {
-                    if (name === 'redoPlacement') setTimeout(cb, 300);
-                }
-            },
-            map: {
-                transform: { cameraToCenterDistance: 1, cameraToTileDistance: () => { return 1; } },
-                painter: { tileExtentVAO: {vao: 0}}
-            }
-        });
-
-        tile.redoPlacement(source);
-        tile.placementSource.on('data', ()=>{
-            if (tile.state === 'loaded') t.end();
-        });
-    });
-
     t.end();
 });
 
 test('expiring tiles', (t) => {
     t.test('regular tiles do not expire', (t) => {
-        const tile = new Tile(new TileCoord(1, 1, 1));
+        const tile = new Tile(new OverscaledTileID(1, 0, 1, 1, 1));
         tile.state = 'loaded';
         tile.timeAdded = Date.now();
 
@@ -210,7 +192,7 @@ test('expiring tiles', (t) => {
     });
 
     t.test('set, get expiry', (t) => {
-        const tile = new Tile(new TileCoord(1, 1, 1));
+        const tile = new Tile(new OverscaledTileID(1, 0, 1, 1, 1));
         tile.state = 'loaded';
         tile.timeAdded = Date.now();
 
@@ -240,7 +222,7 @@ test('expiring tiles', (t) => {
     });
 
     t.test('exponential backoff handling', (t) => {
-        const tile = new Tile(new TileCoord(1, 1, 1));
+        const tile = new Tile(new OverscaledTileID(1, 0, 1, 1, 1));
         tile.state = 'loaded';
         tile.timeAdded = Date.now();
 
@@ -282,20 +264,42 @@ test('expiring tiles', (t) => {
     t.end();
 });
 
+test('rtl text detection', (t) => {
+    t.test('Tile#hasRTLText is true when a tile loads a symbol bucket with rtl text', (t) => {
+        const tile = new Tile(new OverscaledTileID(1, 0, 1, 1, 1));
+        // Create a stub symbol bucket
+        const symbolBucket = createSymbolBucket('test', 'Test', 'test', new CollisionBoxArray());
+        // symbolBucket has not been populated yet so we force override the value in the stub
+        symbolBucket.hasRTLText = true;
+        tile.loadVectorData(
+            createVectorData({rawTileData: createRawTileData(), buckets: [symbolBucket]}),
+            createPainter({
+                getLayer() {
+                    return symbolBucket.layers[0];
+                }
+            })
+        );
+
+        t.ok(tile.hasRTLText);
+        t.end();
+    });
+
+    t.end();
+});
+
 function createRawTileData() {
     return fs.readFileSync(path.join(__dirname, '/../../fixtures/mbsv5-6-18-23.vector.pbf'));
 }
 
 function createVectorData(options) {
     const collisionBoxArray = new CollisionBoxArray();
-    return util.extend({
-        collisionBoxArray: collisionBoxArray.serialize(),
-        collisionTile: (new CollisionTile(0, 0, 1, 1, collisionBoxArray)).serialize(),
-        featureIndex: (new FeatureIndex(new TileCoord(1, 1, 1))).serialize(),
+    return extend({
+        collisionBoxArray: deserialize(serialize(collisionBoxArray)),
+        featureIndex: deserialize(serialize(new FeatureIndex(new OverscaledTileID(1, 0, 1, 1, 1)))),
         buckets: []
     }, options);
 }
 
-function createPainter() {
-    return { style: {} };
+function createPainter(styleStub = {}) {
+    return {style: styleStub};
 }

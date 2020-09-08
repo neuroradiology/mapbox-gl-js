@@ -1,11 +1,9 @@
-'use strict';
-
-const test = require('mapbox-gl-js-test').test;
-const fs = require('fs');
-const path = require('path');
-const Protobuf = require('pbf');
-const VectorTile = require('@mapbox/vector-tile').VectorTile;
-const loadGeometry = require('../../../src/data/load_geometry.js');
+import {test} from '../../util/test';
+import fs from 'fs';
+import path from 'path';
+import Protobuf from 'pbf';
+import {VectorTile} from '@mapbox/vector-tile';
+import loadGeometry from '../../../src/data/load_geometry.js';
 
 // Load a line feature from fixture tile.
 const vt = new VectorTile(new Protobuf(fs.readFileSync(path.join(__dirname, '/../../fixtures/mbsv5-6-18-23.vector.pbf'))));
@@ -19,7 +17,7 @@ test('loadGeometry', (t) => {
     t.end();
 });
 
-test('loadGeometry extent error', (t) => {
+test('loadGeometry warns and clamps when exceeding extent', (t) => {
     const feature = vt.layers.road.feature(0);
     feature.extent = 2048;
 
@@ -33,9 +31,17 @@ test('loadGeometry extent error', (t) => {
         }
     };
 
-    loadGeometry(feature, 15);
+    const lines = loadGeometry(feature);
 
     t.equal(numWarnings, 1);
+
+    let maxValue = -Infinity;
+    for (const line of lines) {
+        for (const {x, y} of line) {
+            maxValue = Math.max(x, y, maxValue);
+        }
+    }
+    t.equal(maxValue, 16383);
 
     // Put it back
     console.warn = warn;

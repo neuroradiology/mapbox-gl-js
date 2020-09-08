@@ -1,11 +1,9 @@
-'use strict';
-
-const test = require('mapbox-gl-js-test').test;
-const fs = require('fs');
-const path = require('path');
-const Protobuf = require('pbf');
-const VectorTile = require('@mapbox/vector-tile').VectorTile;
-const classifyRings = require('../../../src/util/classify_rings');
+import {test} from '../../util/test';
+import fs from 'fs';
+import path from 'path';
+import Protobuf from 'pbf';
+import {VectorTile} from '@mapbox/vector-tile';
+import classifyRings from '../../../src/util/classify_rings';
 
 // Load a fill feature from fixture tile.
 const vt = new VectorTile(new Protobuf(fs.readFileSync(path.join(__dirname, '/../../fixtures/mbsv5-6-18-23.vector.pbf'))));
@@ -95,7 +93,6 @@ test('classifyRings + maxRings', (t) => {
         }
         return geometry;
     }
-
 
     t.test('maxRings=undefined', (t) => {
         const geometry = sortRings(classifyRings(createGeometry()));

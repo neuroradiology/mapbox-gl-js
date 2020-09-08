@@ -1,8 +1,8 @@
 // @flow
 
-const Point = require('@mapbox/point-geometry');
+import Point from '@mapbox/point-geometry';
 
-module.exports = clipLine;
+export default clipLine;
 
 /**
  * Returns the part of a multiline that intersects with the provided rectangular box.
@@ -25,7 +25,6 @@ function clipLine(lines: Array<Array<Point>>, x1: number, y1: number, x2: number
         for (let i = 0; i < line.length - 1; i++) {
             let p0 = line[i];
             let p1 = line[i + 1];
-
 
             if (p0.x < x1 && p1.x < x1) {
                 continue;

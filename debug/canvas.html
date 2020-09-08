@@ -4,7 +4,7 @@
     <title>Mapbox GL JS debug page</title>
     <meta charset='utf-8'>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <link rel='stylesheet' href='/dist/mapbox-gl.css' />
+    <link rel='stylesheet' href='../dist/mapbox-gl.css' />
     <style>
         body { margin: 0; padding: 0; }
         html, body, #map { height: 100%; }
@@ -17,8 +17,8 @@ style="border:10px solid blue;">
 Canvas not supported
 </canvas>
 <div id='map'></div>
-<script src='/dist/mapbox-gl-dev.js'></script>
-<script src='/debug/access_token_generated.js'></script>
+<script src='../dist/mapbox-gl-dev.js'></script>
+<script src='../debug/access_token_generated.js'></script>
 <script>
 
 function drawToCanvas() {
@@ -40,6 +40,7 @@ var canvasStyle = {
         "canvas": {
             "type": "canvas",
             "canvas": "testCanvasID",
+            "animate": false,
             "coordinates": [
                 [-122.51596391201019, 37.56238816766053],
                 [-122.51467645168304, 37.56410183312965],

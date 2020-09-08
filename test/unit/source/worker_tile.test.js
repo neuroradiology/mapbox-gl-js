@@ -1,11 +1,8 @@
-'use strict';
-
-const test = require('mapbox-gl-js-test').test;
-const WorkerTile = require('../../../src/source/worker_tile');
-const Wrapper = require('../../../src/source/geojson_wrapper');
-const TileCoord = require('../../../src/source/tile_coord');
-const StyleLayerIndex = require('../../../src/style/style_layer_index');
-const util = require('../../../src/util/util');
+import {test} from '../../util/test';
+import WorkerTile from '../../../src/source/worker_tile';
+import Wrapper from '../../../src/source/geojson_wrapper';
+import {OverscaledTileID} from '../../../src/source/tile_id';
+import StyleLayerIndex from '../../../src/style/style_layer_index';
 
 function createWorkerTile() {
     return new WorkerTile({
@@ -14,7 +11,7 @@ function createWorkerTile() {
         maxZoom: 20,
         tileSize: 512,
         source: 'source',
-        coord: new TileCoord(1, 1, 1),
+        tileID: new OverscaledTileID(1, 0, 1, 1, 1),
         overscaling: 1
     });
 }
@@ -35,7 +32,7 @@ test('WorkerTile#parse', (t) => {
     }]);
 
     const tile = createWorkerTile();
-    tile.parse(createWrapper(), layerIndex, {}, (err, result) => {
+    tile.parse(createWrapper(), layerIndex, [], {}, (err, result) => {
         t.ifError(err);
         t.ok(result.buckets[0]);
         t.end();
@@ -47,11 +44,11 @@ test('WorkerTile#parse skips hidden layers', (t) => {
         id: 'test-hidden',
         source: 'source',
         type: 'fill',
-        layout: { visibility: 'none' }
+        layout: {visibility: 'none'}
     }]);
 
     const tile = createWorkerTile();
-    tile.parse(createWrapper(), layerIndex, {}, (err, result) => {
+    tile.parse(createWrapper(), layerIndex, [], {}, (err, result) => {
         t.ifError(err);
         t.equal(result.buckets.length, 0);
         t.end();
@@ -67,7 +64,7 @@ test('WorkerTile#parse skips layers without a corresponding source layer', (t) =
     }]);
 
     const tile = createWorkerTile();
-    tile.parse({layers: {}}, layerIndex, {}, (err, result) => {
+    tile.parse({layers: {}}, layerIndex, [], {}, (err, result) => {
         t.ifError(err);
         t.equal(result.buckets.length, 0);
         t.end();
@@ -90,12 +87,12 @@ test('WorkerTile#parse warns once when encountering a v1 vector tile layer', (t)
         }
     };
 
-    t.stub(util, 'warnOnce');
+    t.stub(console, 'warn');
 
     const tile = createWorkerTile();
-    tile.parse(data, layerIndex, {}, (err) => {
+    tile.parse(data, layerIndex, [], {}, (err) => {
         t.ifError(err);
-        t.ok(util.warnOnce.calledWithMatch(/does not use vector tile spec v2/));
+        t.ok(console.warn.calledWithMatch(/does not use vector tile spec v2/));
         t.end();
     });
 });

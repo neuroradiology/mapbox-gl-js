@@ -1,13 +1,19 @@
 
-const ValidationError = require('../error/validation_error');
-const getType = require('../util/get_type');
-const validate = require('./validate');
-const validateObject = require('./validate_object');
-const validateArray = require('./validate_array');
-const validateNumber = require('./validate_number');
-const unbundle = require('../util/unbundle_jsonlint');
+import ValidationError from '../error/validation_error';
+import getType from '../util/get_type';
+import validate from './validate';
+import validateObject from './validate_object';
+import validateArray from './validate_array';
+import validateNumber from './validate_number';
+import {isExpression} from '../expression';
+import {unbundle, deepUnbundle} from '../util/unbundle_jsonlint';
+import {
+    supportsPropertyExpression,
+    supportsZoomExpression,
+    supportsInterpolation
+} from '../util/properties';
 
-module.exports = function validateFunction(options) {
+export default function validateFunction(options) {
     const functionValueSpec = options.valueSpec;
     const functionType = unbundle(options.value.type);
     let stopKeyType;
@@ -42,14 +48,14 @@ module.exports = function validateFunction(options) {
         errors.push(new ValidationError(options.key, options.value, 'missing required property "stops"'));
     }
 
-    if (functionType === 'exponential' && options.valueSpec['function'] === 'piecewise-constant') {
+    if (functionType === 'exponential' && options.valueSpec.expression && !supportsInterpolation(options.valueSpec)) {
         errors.push(new ValidationError(options.key, options.value, 'exponential functions not supported'));
     }
 
     if (options.styleSpec.$version >= 8) {
-        if (isPropertyFunction && !options.valueSpec['property-function']) {
+        if (isPropertyFunction && !supportsPropertyExpression(options.valueSpec)) {
             errors.push(new ValidationError(options.key, options.value, 'property functions not supported'));
-        } else if (isZoomFunction && !options.valueSpec['zoom-function']) {
+        } else if (isZoomFunction && !supportsZoomExpression(options.valueSpec)) {
             errors.push(new ValidationError(options.key, options.value, 'zoom functions not supported'));
         }
     }
@@ -70,7 +76,7 @@ module.exports = function validateFunction(options) {
 
         errors = errors.concat(validateArray({
             key: options.key,
-            value: value,
+            value,
             valueSpec: options.valueSpec,
             style: options.style,
             styleSpec: options.styleSpec,
@@ -90,16 +96,16 @@ module.exports = function validateFunction(options) {
         const key = options.key;
 
         if (getType(value) !== 'array') {
-            return [new ValidationError(key, value, 'array expected, %s found', getType(value))];
+            return [new ValidationError(key, value, `array expected, ${getType(value)} found`)];
         }
 
         if (value.length !== 2) {
-            return [new ValidationError(key, value, 'array length %d expected, length %d found', 2, value.length)];
+            return [new ValidationError(key, value, `array length 2 expected, length ${value.length} found`)];
         }
 
         if (isZoomAndPropertyFunction) {
             if (getType(value[0]) !== 'object') {
-                return [new ValidationError(key, value, 'object expected, %s found', getType(value[0]))];
+                return [new ValidationError(key, value, `object expected, ${getType(value[0])} found`)];
             }
             if (value[0].zoom === undefined) {
                 return [new ValidationError(key, value, 'object stop key must have zoom')];
@@ -118,10 +124,10 @@ module.exports = function validateFunction(options) {
             errors = errors.concat(validateObject({
                 key: `${key}[0]`,
                 value: value[0],
-                valueSpec: { zoom: {} },
+                valueSpec: {zoom: {}},
                 style: options.style,
                 styleSpec: options.styleSpec,
-                objectElementValidators: { zoom: validateNumber, value: validateStopDomainValue }
+                objectElementValidators: {zoom: validateNumber, value: validateStopDomainValue}
             }));
         } else {
             errors = errors.concat(validateStopDomainValue({
@@ -130,7 +136,11 @@ module.exports = function validateFunction(options) {
                 valueSpec: {},
                 style: options.style,
                 styleSpec: options.styleSpec
-            }));
+            }, value));
+        }
+
+        if (isExpression(deepUnbundle(value[1]))) {
+            return errors.concat([new ValidationError(`${key}[1]`, value[1], 'expressions are not allowed in function stops.')]);
         }
 
         return errors.concat(validate({
@@ -142,40 +152,42 @@ module.exports = function validateFunction(options) {
         }));
     }
 
-    function validateStopDomainValue(options) {
+    function validateStopDomainValue(options, stop) {
         const type = getType(options.value);
         const value = unbundle(options.value);
+
+        const reportValue = options.value !== null ? options.value : stop;
 
         if (!stopKeyType) {
             stopKeyType = type;
         } else if (type !== stopKeyType) {
-            return [new ValidationError(options.key, options.value, '%s stop domain type must match previous stop domain type %s', type, stopKeyType)];
+            return [new ValidationError(options.key, reportValue, `${type} stop domain type must match previous stop domain type ${stopKeyType}`)];
         }
 
         if (type !== 'number' && type !== 'string' && type !== 'boolean') {
-            return [new ValidationError(options.key, options.value, 'stop domain value must be a number, string, or boolean')];
+            return [new ValidationError(options.key, reportValue, 'stop domain value must be a number, string, or boolean')];
         }
 
         if (type !== 'number' && functionType !== 'categorical') {
-            let message = 'number expected, %s found';
-            if (functionValueSpec['property-function'] && functionType === undefined) {
+            let message = `number expected, ${type} found`;
+            if (supportsPropertyExpression(functionValueSpec) && functionType === undefined) {
                 message += '\nIf you intended to use a categorical function, specify `"type": "categorical"`.';
             }
-            return [new ValidationError(options.key, options.value, message, type)];
+            return [new ValidationError(options.key, reportValue, message)];
         }
 
         if (functionType === 'categorical' && type === 'number' && (!isFinite(value) || Math.floor(value) !== value)) {
-            return [new ValidationError(options.key, options.value, 'integer expected, found %s', value)];
+            return [new ValidationError(options.key, reportValue, `integer expected, found ${value}`)];
         }
 
         if (functionType !== 'categorical' && type === 'number' && previousStopDomainValue !== undefined && value < previousStopDomainValue) {
-            return [new ValidationError(options.key, options.value, 'stop domain values must appear in ascending order')];
+            return [new ValidationError(options.key, reportValue, 'stop domain values must appear in ascending order')];
         } else {
             previousStopDomainValue = value;
         }
 
         if (functionType === 'categorical' && value in stopDomainValues) {
-            return [new ValidationError(options.key, options.value, 'stop domain values must be unique')];
+            return [new ValidationError(options.key, reportValue, 'stop domain values must be unique')];
         } else {
             stopDomainValues[value] = true;
         }
@@ -192,4 +204,4 @@ module.exports = function validateFunction(options) {
             styleSpec: options.styleSpec
         });
     }
-};
+}
